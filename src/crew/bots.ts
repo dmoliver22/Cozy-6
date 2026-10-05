@@ -281,14 +281,19 @@ export class BotBrain {
     // 3. pot work
     const pj = this.potJob();
     if (pj) return pj;
+    // 7. chip ice (urgent once it gets really slick)
+    const ice = ctx.sys.ice;
+    if (ice && ice.worstZone && ice.worstZone().level > 0.7 && !this.board.holder('chip')) {
+      const t = new ChipTask();
+      t.pri = 55;
+      return t;
+    }
     // 4. sort crab / specials
     const sort = this.sortJob();
     if (sort) return sort;
     // fetch your hat
     if (!c.hatOn && c.hatItem && c.hatItem.mode === 'deck') return new HatTask(c.hatItem);
-    // 7. chip ice
-    const ice = ctx.sys.ice;
-    if (ice && ice.worstZone && ice.worstZone().level > 0.45 && !this.board.holder('chip')) return new ChipTask();
+    if (ice && ice.worstZone && ice.worstZone().level > 0.4 && !this.board.holder('chip')) return new ChipTask();
     // cat care
     const cat = ctx.sys.cat;
     if (cat && cat.wantsInside?.() && !this.board.holder('cat') && c.id === 'dot') return new CatTask();
@@ -311,6 +316,9 @@ export class BotBrain {
     if (trip && trip.botsHold && trip.botsHold()) return null;
     // carrying a line: clip it
     if (c.held && c.held.kind === 'lineEnd') return new ClipTask();
+    // somebody dropped the buoy line: pick it up
+    const looseLine = this.ctx.items.items.find((it) => it.kind === 'lineEnd' && it.mode === 'deck' && !it.heldBy);
+    if (looseLine && !pots.blockPot) return claimed(new FetchTask(looseLine), 'line');
     const cp = pots.cradlePot;
     // tip a full pot
     if (cp && cp.state === 'cradle' && cp.catch && pots.cradleMode === 'idle' && !this.playerDoing('tip')) return claimed(new LeverTask('tip'), 'lever');
@@ -711,6 +719,22 @@ class SortTask extends Task {
   }
 }
 
+class FetchTask extends Task {
+  name = 'fetch line';
+  pri = 69;
+  constructor(private it: Item) {
+    super();
+  }
+  step(b: BotBrain): Status {
+    const it = this.it;
+    if (it.mode !== 'deck') return 'done';
+    if (it.heldBy) return it.heldBy === (b.crew as unknown) ? 'done' : 'fail';
+    if (!b.goTo(it.localPos(new THREE.Vector3()), 0.9)) return 'run';
+    b.holdUse(it.data.iaId);
+    return this.t > 15 ? 'fail' : 'run';
+  }
+}
+
 class HatTask extends Task {
   name = 'get hat';
   pri = 40;
@@ -728,15 +752,21 @@ class ChipTask extends Task {
   name = 'chip ice';
   pri = 25;
   claimKey = 'chip';
+  private zone = -1;
   step(b: BotBrain): Status {
     const ice = b.ctx.sys.ice;
     const m = ice.mallet as Item;
     const c = b.crew;
-    const z = ice.worstZone();
-    if (z.level < 0.15) {
-      if (c.held === m) {
-        b.pressInteract(null); // put it down
+    if (this.zone < 0) this.zone = ice.worstZone().zone;
+    const level = ice.level(this.zone);
+    if (level < 0.08) {
+      // this patch is clear: next worst, or hang the mallet back up
+      const w = ice.worstZone();
+      if (w.level > 0.3 && this.t < 40) {
+        this.zone = w.zone;
+        return 'run';
       }
+      if (c.held === m) b.pressInteract(null); // put it down
       return 'done';
     }
     if (c.held !== m) {
@@ -746,16 +776,22 @@ class ChipTask extends Task {
       b.holdUse(m.data.iaId);
       return 'run';
     }
-    if (!b.goTo(z.spot, 0.6)) return 'run';
+    const spot = ice.spots[this.zone] as THREE.Vector3;
+    const me = b.pos();
+    if (Math.hypot(spot.x - me.x, spot.z - me.z) > 1.4) {
+      b.goTo(spot, 0.6);
+      return 'run';
+    }
+    b.face(spot.clone().setX(spot.x + Math.sign(spot.x) * 0.6));
     // rhythmic taps
     if (Math.floor(this.t * 4) !== Math.floor((this.t - 1 / 60) * 4)) {
-      const ia = b.ctx.interact.list.find((x) => x.name === 'ice:' + z.zone);
+      const ia = b.ctx.interact.list.find((x) => x.name === 'ice:' + this.zone);
       if (ia) {
         c.input.targetId = ia.id;
         c.input.usePressed = 1;
       }
     }
-    return this.t > 30 ? 'done' : 'run';
+    return this.t > 60 ? 'done' : 'run';
   }
 }
 

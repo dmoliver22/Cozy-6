@@ -52,6 +52,9 @@ import { Helm } from '../crew/helm';
 import { Cat } from '../crew/cat';
 import { Trip } from './trip';
 import { makeBuoy } from '../art/items';
+import { WeatherDirector } from '../weather/director';
+import { Snow } from '../weather/snow';
+import { IceSystem } from '../weather/ice';
 import type { CrewId } from '../crew/crew';
 
 const _p = new THREE.Vector3();
@@ -90,6 +93,9 @@ export class Game {
   readonly helm: Helm;
   readonly cat: Cat;
   readonly trip: Trip;
+  readonly weather: WeatherDirector;
+  readonly snow: Snow;
+  readonly ice: IceSystem;
   private pingWho: CrewId | null = null;
   private cutaway = 1;
   renderTime = 0;
@@ -182,6 +188,10 @@ export class Game {
       const bp = L.buoyPile.clone().add(new THREE.Vector3((i % 2) * -0.5, 0.3 + Math.floor(i / 4) * 0.45, -0.9 + (i % 4) * 0.55));
       items.add(ITEM_DEFS.buoy, makeBuoy(), bp);
     }
+    this.weather = new WeatherDirector(this.ctx);
+    this.ice = new IceSystem(this.ctx);
+    this.snow = new Snow(this.stage.scene, config.quality[this.stage.quality].snow);
+    this.ctx.sys.weatherFx = { setQuality: (q: Quality) => this.snow.setCount(config.quality[q].snow) };
     this.helm = new Helm(this.ctx);
     this.bots = new BotSystem(this.ctx);
     this.cat = new Cat(this.ctx);
@@ -319,6 +329,7 @@ export class Game {
     const ctx = this.ctx;
     this.sea.time += dt;
     schedule.step(dt);
+    this.weather.step(dt);
     this.rogue.step(dt);
     this.nav.step(dt);
     this.boat.step(dt, this.sea);
@@ -333,6 +344,7 @@ export class Game {
     this.ctx.items.stepPre(dt);
     this.crabs.step(dt);
     this.specials.step(dt);
+    this.ice.step(dt);
     this.wash.step(dt);
     this.spray.step(dt);
     this.ctx.surface.step(dt, this.dw.gDir);
@@ -362,6 +374,7 @@ export class Game {
     this.crew.render(alpha, dtReal, this.boatRenderPos, this.boatRenderQuat);
     this.cat.render(dtReal);
     this.updateCutaway(dtReal);
+    this.ice.render();
     this.rescue.render(this.boatRenderPos, this.boatRenderQuat);
     this.pots.render(alpha, this.boatRenderPos, this.boatRenderQuat);
     this.grapple.render();
@@ -409,11 +422,14 @@ export class Game {
     if (this.rig.mode === 'fp' && this.stage.portrait) this.rig.setMode('overhead');
     this.stage.fpMode = this.rig.blend;
     this.stage.seaMesh.update(this.sea, this.renderTime, this.boatRenderPos, _m, this.boat.speed);
-    this.stage.setWeatherLook(0, this.boatRenderPos);
+    this.stage.setWeatherLook(this.weather.storm, this.boatRenderPos);
+    this.snow.update(this.renderTime, this.stage.camera.position, this.weather.windDir, this.weather.wind, this.weather.snow, window.innerHeight * this.stage.renderer.getPixelRatio(), this.rig.blend);
     this.spray.setPixelScale(window.innerHeight * this.stage.renderer.getPixelRatio());
 
     // HUD
-    this.hud.setWave(this.rogue.hudState(), player.braced || player.crouch);
+    const ws = this.rogue.hudState();
+    this.hud.setWave(ws, player.braced || player.crouch);
+    this.trip.hideObjective = !!ws;
     const inds = this.crew.overboard().map((c) => ({ world: c.wp.clone().setY(c.wp.y + 1.2), icon: '🛟', color: '#e8742b', label: c.id === 'player' ? 'You' : c.name }));
     for (const pot of this.pots.soakingPots()) {
       const b = pot.buoy!;
@@ -449,7 +465,7 @@ export class Game {
       frameMs: this.debug.frameMs,
       bodies: bc.total,
       awake: bc.awake,
-      wave: `swell ${this.sea.swell.toFixed(2)}${r ? ` · rogue ${r.side} amp ${r.amp.toFixed(1)} stage ${r.stage} in ${(r.tImpact - this.ctx.time).toFixed(1)}s` : ''}`,
+      wave: `${this.weather.phase} swell ${this.sea.swell.toFixed(2)} storm ${this.weather.storm.toFixed(2)} ice ${this.ctx.surface.totalIce().toFixed(2)}${r ? ` · rogue ${r.side} amp ${r.amp.toFixed(1)} stage ${r.stage} in ${(r.tImpact - this.ctx.time).toFixed(1)}s` : ''}`,
       gLocal: this.dw.gLocal,
       roll: this.boat.rollDeg,
       pitch: this.boat.pitchDeg,
@@ -465,6 +481,9 @@ export class Game {
     this.loops.engine?.setPitch(0.8 + Math.abs(this.boat.speed) / 5, 0.3);
     this.loops.hull?.setVolume(0.25 + sw * 0.7, 0.5);
     this.loops.deckWater?.setVolume(clamp(this.ctx.surface.water * 6, 0, 1), 0.2);
+    this.loops.wind?.setVolume(0.15 + this.weather.wind * 0.85, 1);
+    this.loops.wind?.setPitch(0.6 + this.weather.wind * 0.9, 1);
+    music.setIntensity(this.weather.storm);
   }
 
   private updatePrompt(): void {
@@ -546,8 +565,15 @@ export class Game {
       if (e.code === 'KeyR') this.triggerRogue((['port', 'starboard', 'bow'] as RogueSide[])[Math.floor(Math.random() * 3)], 2.6);
       if (e.code === 'KeyO') this.crew.get('ike').goOverboard();
       if (e.code === 'KeyK') this.crew.get('ike').knockdown(new THREE.Vector3(3, 1, 0), 'debug');
-      if (e.code === 'BracketRight') this.sea.swell = Math.min(1.2, this.sea.swell + 0.1);
-      if (e.code === 'BracketLeft') this.sea.swell = Math.max(0, this.sea.swell - 0.1);
+      if (e.code === 'BracketRight') {
+        this.weather.locked = true;
+        this.weather.cur.swell = Math.min(1.2, this.weather.cur.swell + 0.1);
+      }
+      if (e.code === 'BracketLeft') {
+        this.weather.locked = true;
+        this.weather.cur.swell = Math.max(0, this.weather.cur.swell - 0.1);
+      }
+      if (e.code === 'KeyT') this.trip.setPhase('haul2');
     });
   }
 }

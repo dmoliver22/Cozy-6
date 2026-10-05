@@ -105,9 +105,10 @@ export class Trip {
   private radio(text: string, urgent = false): void {
     events.emit('radio', { who: 'Mo', text, urgent });
   }
+  hideObjective = false;
   private objective(text: string): void {
     if (this.objectiveEl.textContent !== text) this.objectiveEl.textContent = text;
-    this.objectiveEl.style.display = text ? 'block' : 'none';
+    this.objectiveEl.style.display = text && !this.hideObjective ? 'block' : 'none';
   }
 
   start(skipTutorial = false): void {

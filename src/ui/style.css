@@ -131,7 +131,6 @@ html, body {
 .rotate-hint.on { display: block; }
 
 .objective { position: absolute; left: 50%; top: calc(10px + var(--safe-t)); transform: translateX(-50%); background: rgba(246,239,224,.92); color: var(--ink); font-weight: 800; font-size: 15px; padding: 7px 14px; border-radius: 12px; box-shadow: 0 3px 10px rgba(0,0,0,.25); white-space: nowrap; max-width: 70vw; overflow: hidden; text-overflow: ellipsis; display: none; }
-.hud-wave.on ~ .objective { display: none !important; }
 .decision { position: absolute; inset: 0; display: none; place-items: center; background: rgba(12,26,30,.35); z-index: 25; pointer-events: auto; }
 .decision.on { display: grid; }
 .decision-card { width: min(460px, 92vw); background: var(--amber); color: #2a1b0e; border-radius: 18px; padding: 16px 18px; box-shadow: 0 10px 30px rgba(0,0,0,.4); }

@@ -166,8 +166,8 @@ export const config = {
   weather: {
     phases: {
       calm: { swell: 0.32, wind: 0.15, snow: 0.0, iceRate: 0.0, storm: 0.0 },
-      choppy: { swell: 0.62, wind: 0.45, snow: 0.25, iceRate: 0.004, storm: 0.4 },
-      storm: { swell: 0.95, wind: 0.9, snow: 0.85, iceRate: 0.018, storm: 1.0 },
+      choppy: { swell: 0.62, wind: 0.45, snow: 0.25, iceRate: 0.0012, storm: 0.4 },
+      storm: { swell: 0.95, wind: 0.9, snow: 0.85, iceRate: 0.0055, storm: 1.0 },
     },
     blendSec: 25,
     rogueAmp: { tutorial: 1.0, choppy: 1.9, storm: 2.8 },
