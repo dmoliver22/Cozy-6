@@ -402,7 +402,7 @@ export class Game {
   }
 
   toggleView(): void {
-    if (this.rig.mode === 'overhead' && this.stage.portrait) {
+    if (this.rig.mode === 'overhead' && this.stage.isPhone && this.stage.portrait) {
       this.rotateHint.classList.add('on');
       setTimeout(() => this.rotateHint.classList.remove('on'), 1800);
       return;
@@ -540,7 +540,7 @@ export class Game {
     this.hands.update(dtReal, this.stage.camera, player, this.boatGroup.matrixWorld, this.rig.blend, this.ctx.time);
     this.reticle.classList.toggle('on', this.rig.blend > 0.9 && !player.inSea);
     this.reticle.classList.toggle('hot', !!player.target);
-    if (this.rig.mode === 'fp' && this.stage.portrait) this.rig.setMode('overhead');
+    if (this.rig.mode === 'fp' && this.stage.isPhone && this.stage.portrait) this.rig.setMode('overhead');
     this.stage.fpMode = this.rig.blend;
     this.stage.seaMesh.update(this.sea, this.renderTime, this.boatRenderPos, _m, this.boat.speed);
     this.stage.setWeatherLook(this.weather.storm, this.boatRenderPos);

@@ -29,6 +29,20 @@ npm run preview    # serve the build
 To play on a phone, open the LAN address that `npm run dev` prints, on the same Wi-Fi.
 Landscape is recommended; portrait works with a stern-on camera.
 
+### The claude.ai Artifact build
+
+The game is also published as a single page on claude.ai. To rebuild that page:
+
+```bash
+npm run build:artifact            # artifact/pot-luck.html (the game's own code, CSS inlined)
+node scripts/build-rapier-js.mjs  # artifact/rapier-js.mjs (physics without WebAssembly, ~1 min)
+node scripts/artifact-test.mjs    # play-test it in a local copy of the viewer frame
+```
+
+The page loads three.js and Rapier from jsDelivr through an import map. If the viewer's frame
+blocks WebAssembly, the page loads `rapier-js.mjs` instead: the same physics engine compiled to
+JavaScript. It gives the same results but runs slower. See NOTES.md for what the frame changes.
+
 ## Controls
 
 | Action | Desktop | Gamepad | Phone |

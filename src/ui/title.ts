@@ -2,7 +2,17 @@
  * Title card (first launch: "tap to cast off" — also unlocks audio on iOS) and the harbor chart
  * for later trips: one fishing ground with an escalating forecast.
  */
-import { sfx } from '../audio';
+import { sfx, onAudioReady } from '../audio';
+
+/** The foghorn on casting off: wait for the audio context to finish resuming (it can lag a frame). */
+function foghorn(): void {
+  let tm = 0;
+  const off = onAudioReady(() => {
+    clearTimeout(tm);
+    sfx.play('foghorn', { volume: 0.5 });
+  });
+  tm = window.setTimeout(off, 600);
+}
 
 export function showTitle(parent: HTMLElement, firstTime: boolean, onGo: () => void): void {
   const el = document.createElement('div');
@@ -15,9 +25,12 @@ export function showTitle(parent: HTMLElement, firstTime: boolean, onGo: () => v
       <div class="title-hint">Headphones on · works with mouse & keys, a gamepad, or touch</div>
     </div>`;
   parent.appendChild(el);
+  let started = false;
   const go = () => {
+    if (started) return;
+    started = true;
     sfx.unlock();
-    sfx.play('foghorn', { volume: 0.5 });
+    foghorn();
     el.classList.add('out');
     setTimeout(() => el.remove(), 600);
     onGo();
@@ -91,9 +104,12 @@ export function showChart(parent: HTMLElement, trips: number, upgrades: string[]
   g.fillText('Kingfisher Bank', 360, 225);
   g.font = '26px serif';
   g.fillText('🦀', 405, 175);
+  let started = false;
   el.querySelector('[data-go]')!.addEventListener('click', () => {
+    if (started) return;
+    started = true;
     sfx.unlock();
-    sfx.play('foghorn', { volume: 0.5 });
+    foghorn();
     el.classList.add('out');
     setTimeout(() => el.remove(), 600);
     onGo();

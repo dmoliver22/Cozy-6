@@ -44,15 +44,33 @@ export class FixedLoop {
     if (!this.paused) this.acc += dtReal * this.timeScale;
     let steps = 0;
     const max = config.sim.maxStepsPerFrame;
-    while (this.acc >= this.dt && steps < max) {
-      this.hooks.step(this.dt);
-      this.simTime += this.dt;
-      this.acc -= this.dt;
-      steps++;
+    try {
+      while (this.acc >= this.dt && steps < max) {
+        this.hooks.step(this.dt);
+        this.simTime += this.dt;
+        this.acc -= this.dt;
+        steps++;
+      }
+    } catch (e) {
+      this.acc = 0;
+      this.reportOnce('step', e);
     }
     if (steps >= max) this.acc = Math.min(this.acc, this.dt); // avoid the spiral of death
     this.frame++;
-    this.hooks.render(this.acc / this.dt, dtReal, dtReal * this.timeScale);
+    try {
+      this.hooks.render(this.acc / this.dt, dtReal, dtReal * this.timeScale);
+    } catch (e) {
+      this.reportOnce('render', e);
+    }
+  }
+
+  private reported = new Set<string>();
+  /** Log each distinct error once instead of 60 times a second. */
+  private reportOnce(where: string, e: unknown): void {
+    const key = where + ':' + String(e);
+    if (this.reported.has(key)) return;
+    this.reported.add(key);
+    console.error(`[loop ${where}]`, e);
   }
 
   /** Advance the simulation by n steps without rendering (tests / fast-forward). */

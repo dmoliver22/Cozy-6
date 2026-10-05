@@ -1,13 +1,15 @@
 import './ui/style.css';
-import RAPIER from '@dimforge/rapier3d-compat';
 import { applyUrlOverrides } from './config';
+import { initPhysics } from './core/physicsInit';
 import { Game } from './game/game';
 import { events } from './core/events';
 import { showTitle, showChart } from './ui/title';
 
 async function boot() {
   const params = applyUrlOverrides();
-  await RAPIER.init();
+  const physics = await initPhysics();
+  if (physics === 'js') console.info('Pot Luck: WebAssembly is blocked here, running the JavaScript build of the physics engine (slower).');
+  (window as unknown as { __physics: string }).__physics = physics;
   const app = document.getElementById('app')!;
   const game = new Game(app);
   (window as unknown as { __game: Game; __params: unknown }).__game = game;
@@ -27,6 +29,15 @@ async function boot() {
 
 boot().catch((err) => {
   console.error(err);
-  const el = document.getElementById('loading');
-  if (el) el.innerHTML = `<div class="loading-card"><div class="loading-title">Oops</div><div class="loading-sub">${String(err)}</div></div>`;
+  const msg = String(err);
+  const why = /webgl/i.test(msg)
+    ? "This browser couldn't start WebGL, which Pot Luck needs for its 3D sea. Try another browser, or turn on hardware acceleration."
+    : /webassembly|wasm|unsafe-eval|rapier-js/i.test(msg)
+      ? "This page blocked the physics engine from starting. Try opening Pot Luck in another browser."
+      : "Something went wrong while loading. Reload the page to try again.";
+  const card = document.querySelector('#loading .loading-card');
+  if (!card) return;
+  const sub = card.querySelector('.loading-sub') ?? card.appendChild(document.createElement('div'));
+  sub.className = 'loading-sub loading-error';
+  sub.textContent = why;
 });

@@ -18,6 +18,8 @@ export interface SaveData {
 }
 
 const KEY = 'potluck.save.v1';
+/** window.name survives a reload of the same frame: the fallback when localStorage is unavailable */
+const WN = 'potluck.save:';
 
 export function defaultSave(): SaveData {
   return {
@@ -33,13 +35,28 @@ export function defaultSave(): SaveData {
   };
 }
 
-export function loadSave(): SaveData {
+function parseSave(raw: string | null | undefined): SaveData | null {
+  if (!raw) return null;
   try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) {
-      const d = JSON.parse(raw);
-      if (d && d.version === 1) return { ...defaultSave(), ...d, finds: { ...defaultSave().finds, ...(d.finds ?? {}) } };
-    }
+    const d = JSON.parse(raw);
+    if (d && d.version === 1) return { ...defaultSave(), ...d, finds: { ...defaultSave().finds, ...(d.finds ?? {}) } };
+  } catch {
+    /* corrupt: ignore */
+  }
+  return null;
+}
+
+export function loadSave(): SaveData {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(KEY);
+  } catch {
+    /* storage blocked */
+  }
+  const fromStorage = parseSave(raw);
+  if (fromStorage) return fromStorage;
+  try {
+    if (window.name.startsWith(WN)) return parseSave(window.name.slice(WN.length)) ?? defaultSave();
   } catch {
     /* ignore */
   }
@@ -47,15 +64,22 @@ export function loadSave(): SaveData {
 }
 
 export function writeSave(s: SaveData): boolean {
+  const json = JSON.stringify(s);
   try {
-    localStorage.setItem(KEY, JSON.stringify(s));
+    window.name = WN + json;
+  } catch {
+    /* ignore */
+  }
+  try {
+    localStorage.setItem(KEY, json);
     return true;
   } catch {
     // quota: drop the photos and try again
     try {
       localStorage.setItem(KEY, JSON.stringify({ ...s, photos: s.photos.slice(0, 2) }));
+      return true;
     } catch {
-      /* give up quietly */
+      /* storage blocked: window.name still carries it across the reload */
     }
     return false;
   }
@@ -64,6 +88,11 @@ export function writeSave(s: SaveData): boolean {
 export function clearSave(): void {
   try {
     localStorage.removeItem(KEY);
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (window.name.startsWith(WN)) window.name = '';
   } catch {
     /* ignore */
   }

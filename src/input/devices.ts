@@ -161,8 +161,17 @@ export class Gamepads {
   rt = 0;
   connected = false;
   lastActive = 0;
+  private blocked = false;
   poll(): void {
-    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    // getGamepads throws a SecurityError in frames without the gamepad permission: stop asking
+    let pads: ArrayLike<Gamepad | null> = [];
+    if (!this.blocked && navigator.getGamepads) {
+      try {
+        pads = navigator.getGamepads() ?? [];
+      } catch {
+        this.blocked = true;
+      }
+    }
     const gp = Array.from(pads).find((p) => p && p.connected) ?? null;
     this.prev = this.cur;
     if (!gp) {

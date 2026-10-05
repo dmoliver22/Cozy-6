@@ -11,6 +11,7 @@ import { makeShipBell, makeBoot } from '../art/items';
 import { toon, toonUnique, box, cyl, canvasTexture } from '../art/materials';
 import { Snow } from '../weather/snow';
 import { renderPostcard } from '../photo/photos';
+import { dataUrlToBlob, platformDownloads } from '../core/platform';
 import type { PhotoRecord, SaveData } from '../core/save';
 import type { Appraisal } from '../harbor/market';
 import { LORE } from '../fishing/specials';
@@ -301,11 +302,15 @@ export class Galley {
           const r = potEl.getBoundingClientRect();
           potEl.classList.toggle('hot', ev.clientX > r.left && ev.clientX < r.right && ev.clientY > r.top && ev.clientY < r.bottom);
         };
-        const up = (ev: PointerEvent) => {
+        const end = () => {
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', up);
+          window.removeEventListener('pointercancel', end);
           ghost.remove();
           potEl.classList.remove('hot');
+        };
+        const up = (ev: PointerEvent) => {
+          end();
           const r = potEl.getBoundingClientRect();
           const inside = ev.clientX > r.left && ev.clientX < r.right && ev.clientY > r.top && ev.clientY < r.bottom;
           // a quick tap also adds it (no precise dragging needed)
@@ -321,6 +326,7 @@ export class Galley {
         move(e);
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', up);
+        window.addEventListener('pointercancel', end);
       });
     });
     cook.addEventListener('click', () => this.cook());
@@ -379,13 +385,41 @@ export class Galley {
     const best = this.bestPhoto();
     if (!best) return;
     sfx.play('pageTurn');
+    const btn = this.ui.querySelector<HTMLButtonElement>('[data-pc]');
     const url = await renderPostcard(best, { earnings: this.appraisal.total, kg: this.appraisal.kg, crabs: this.appraisal.crabs, golden: this.appraisal.golden, overboards: this.stats.overboards, allHeld: this.stats.allHeld }, this.save.hatColor);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'potluck-postcard.png';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    const blob = dataUrlToBlob(url);
+    // inside the claude.ai viewer: the viewer's own save prompt
+    const dl = await platformDownloads();
+    if (dl) {
+      try {
+        await dl.save({ filename: 'potluck-postcard.png', data: blob });
+        if (btn) btn.textContent = '💌 Postcard saved';
+        return;
+      } catch (e) {
+        if ((e as { code?: string })?.code === 'declined') return;
+        // anything else: show it so it can be saved by hand
+      }
+    }
+    if (!__ARTIFACT__) {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'potluck-postcard.png';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      return;
+    }
+    this.showPostcard(URL.createObjectURL(blob));
+  }
+
+  /** Where the page can't save files: show the postcard full size to save by hand. */
+  private showPostcard(src: string): void {
+    const inner = this.ui.querySelector<HTMLElement>('.g-photos-inner')!;
+    inner.innerHTML = `<figure class="postcard-preview"><img src="${src}" alt="Pot Luck postcard"><figcaption>Right-click or long-press the postcard to save it.</figcaption></figure><div class="g-photo-actions"><button class="btn" data-x>Close</button></div>`;
+    inner.querySelector('[data-x]')!.addEventListener('click', () => {
+      this.ui.querySelector('.g-photos')!.classList.remove('on');
+      URL.revokeObjectURL(src);
+    });
   }
 
   update(dt: number, renderer: THREE.WebGLRenderer): void {
