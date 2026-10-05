@@ -3,6 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { applyUrlOverrides } from './config';
 import { Game } from './game/game';
 import { events } from './core/events';
+import { showTitle, showChart } from './ui/title';
 
 async function boot() {
   const params = applyUrlOverrides();
@@ -12,8 +13,14 @@ async function boot() {
   (window as unknown as { __game: Game; __params: unknown }).__game = game;
   (window as unknown as { __params: unknown }).__params = params;
   (window as unknown as { __events: unknown }).__events = events;
-  game.trip.start(params.skipTutorial === '1');
   game.start();
+  // the sea idles behind the title until we cast off
+  game.loop.paused = true;
+  game.hud.setVisible(false);
+  const first = game.save.tripsCompleted === 0;
+  if (params.autostart === '1') game.beginTrip(params.skipTutorial === '1' || !first);
+  else if (first) showTitle(app, true, () => game.beginTrip(params.skipTutorial === '1'));
+  else showChart(app, game.save.tripsCompleted, game.save.upgrades, () => game.beginTrip(true));
   document.getElementById('loading')?.classList.add('hidden');
 }
 

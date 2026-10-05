@@ -56,6 +56,13 @@ import { WeatherDirector } from '../weather/director';
 import { Snow } from '../weather/snow';
 import { IceSystem } from '../weather/ice';
 import type { CrewId } from '../crew/crew';
+import { PhotoDirector } from '../photo/photos';
+import { loadSave, writeSave, type SaveData } from '../core/save';
+import { Harbor } from '../harbor/harbor';
+import { Galley } from '../galley/galley';
+import { CREW_LOOKS } from '../art/crew';
+import { toonUnique } from '../art/materials';
+import { hullHalfWidth, BULWARK_T } from '../boat/layout';
 
 const _p = new THREE.Vector3();
 const _m = new THREE.Matrix4();
@@ -98,6 +105,12 @@ export class Game {
   readonly ice: IceSystem;
   private pingWho: CrewId | null = null;
   private cutaway = 1;
+  readonly save: SaveData;
+  readonly photos: PhotoDirector;
+  mode: 'sea' | 'harbor' | 'galley' = 'sea';
+  private harbor: Harbor | null = null;
+  private galley: Galley | null = null;
+  private container: HTMLElement;
   renderTime = 0;
   readonly boatRenderPos = new THREE.Vector3();
   readonly boatRenderQuat = new THREE.Quaternion();
@@ -111,6 +124,11 @@ export class Game {
   private qualityCooldown = 5;
 
   constructor(container: HTMLElement) {
+    this.container = container;
+    this.save = loadSave();
+    // the player's look carries over between trips
+    CREW_LOOKS.player.hatColor = this.save.hatColor;
+    if (this.save.finds.boot) CREW_LOOKS.player.boots = 0x7d9a3a;
     this.stage = new Stage(container);
     this.ui = document.createElement('div');
     this.ui.id = 'ui';
@@ -240,6 +258,14 @@ export class Game {
     this.feedback = new Feedback(this.ctx, this.hud, this.rig, this.crew, this.loop);
 
     this.trip = new Trip(this.ctx, this.ui);
+    this.trip.onEnd = () => this.endTrip();
+    this.photos = new PhotoDirector(this.ctx, this.stage.renderer, this.stage.scene, () => this.hud.flash('rgba(255,255,255,.9)'), () => {
+      // make sure the boat (and everything parented to it) is where the simulation says
+      this.boatGroup.position.copy(this.boat.pos);
+      this.boatGroup.quaternion.copy(this.boat.quat);
+      this.boatGroup.updateMatrixWorld(true);
+    });
+    this.applyProgress();
 
     // audio unlock on any gesture
     const unlock = () => sfx.unlock();
@@ -271,6 +297,91 @@ export class Game {
       this.hud.selectPortrait(null);
     });
     if (this.stage.isPhone) this.rig.zoom = 0.5;
+  }
+
+  /** Owned upgrades and the potluck buff from the last trip. */
+  private applyProgress(): void {
+    const up = new Set(this.save.upgrades);
+    for (const u of up) this.ctx.upgrades.add(u);
+    this.rogue.radarBonus = up.has('betterRadar') ? config.telegraph.radarBonusSec : 0;
+    if (up.has('catHammock')) this.cat.setHammock(true);
+    if (up.has('railNets')) this.addRailNets();
+    if (this.save.buff === 'warmBellies') {
+      this.ctx.buffs.add('warmBellies');
+      this.save.buff = null;
+    }
+  }
+
+  private addRailNets(): void {
+    const mat = toonUnique(0x2b6f6a, { transparent: true, opacity: 0.55 });
+    for (const side of [1, -1]) {
+      for (let z = -4.2; z < 3; z += 1.2) {
+        if (side < 0 && z > -0.2 && z < 2.2) continue;
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 0.5), mat);
+        m.position.set(side * (hullHalfWidth(z + 0.6) - BULWARK_T / 2), 1.32, z + 0.6);
+        m.rotation.y = Math.PI / 2;
+        this.boatGroup.add(m);
+      }
+    }
+  }
+
+  /** Begin the trip (after the title / chart). */
+  beginTrip(skipTutorial: boolean): void {
+    this.loop.paused = false;
+    this.hud.setVisible(true);
+    this.trip.start(skipTutorial);
+  }
+
+  private endTrip(): void {
+    if (this.mode !== 'sea') return;
+    const crabs = this.crabs;
+    // finds from the curio crate
+    const curios = this.specials.curios;
+    const newFinds = {
+      bottle: curios.some((c) => c.kind === 'bottle' && c.outcome === 'crate'),
+      boot: curios.some((c) => c.kind === 'boot' && c.outcome === 'crate'),
+      bell: curios.some((c) => c.kind === 'bell' && c.outcome === 'crate'),
+    };
+    this.save.finds.boot ||= newFinds.boot;
+    this.save.finds.bell ||= newFinds.bell;
+    this.loop.paused = true;
+    this.fade(() => {
+      this.mode = 'harbor';
+      this.hud.setVisible(false);
+      this.touch.setVisible(false);
+      this.ui.style.display = 'none';
+      this.harbor = new Harbor(this.container, this.save, crabs.tank, this.ctx.time, { boot: this.save.finds.boot, bell: this.save.finds.bell });
+      this.harbor.onDone = () =>
+        this.fade(() => {
+          const a = this.harbor!.appraisal;
+          this.save.tripsCompleted++;
+          this.save.photos = this.photos.photos.slice(0, config.photo.max);
+          if (newFinds.bottle) this.save.finds.lore.push(this.save.tripsCompleted);
+          this.save.lastTrip = { earnings: a.total, kg: a.kg, crabs: a.crabs, golden: a.golden, overboards: this.trip.stats.overboards, allHeld: this.trip.stats.allHeld, date: new Date().toISOString() };
+          writeSave(this.save);
+          this.mode = 'galley';
+          this.galley = new Galley(this.container, this.save, this.photos.photos, a, { overboards: this.trip.stats.overboards, allHeld: this.trip.stats.allHeld }, newFinds);
+          this.galley.onNext = () => {
+            writeSave(this.save);
+            this.fade(() => location.reload());
+          };
+        });
+    });
+  }
+
+  /** Fade to warm black and back. */
+  private fade(mid: () => void): void {
+    let el = document.getElementById('fade');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'fade';
+      this.container.appendChild(el);
+    }
+    el.classList.add('on');
+    setTimeout(() => {
+      mid();
+      setTimeout(() => el!.classList.remove('on'), 120);
+    }, 650);
   }
 
   applySettings(st: Settings): void {
@@ -357,6 +468,14 @@ export class Game {
 
   render(alpha: number, dtReal: number, dtSim: number): void {
     this.debug.tick(dtReal);
+    if (this.mode === 'harbor' && this.harbor) {
+      this.harbor.update(dtReal, this.stage.renderer);
+      return;
+    }
+    if (this.mode === 'galley' && this.galley) {
+      this.galley.update(dtReal, this.stage.renderer);
+      return;
+    }
     this.feedback.update(dtReal);
     if (!this.loop.paused) this.autoQuality(dtReal);
     const player = this.crew.player;

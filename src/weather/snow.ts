@@ -81,14 +81,14 @@ export class Snow {
     this.points.geometry = this.makeGeo(count);
   }
 
-  update(time: number, center: THREE.Vector3, wind: THREE.Vector2, windStrength: number, amount: number, pixelScale: number, fp: number): void {
+  update(time: number, center: THREE.Vector3, wind: THREE.Vector2, windStrength: number, amount: number, pixelScale: number, fp: number, boxOverride?: number): void {
     const u = this.mat.uniforms;
     u.uTime.value = time;
     (u.uCenter.value as THREE.Vector3).copy(center);
     (u.uWind.value as THREE.Vector2).copy(wind).multiplyScalar(1 + windStrength * 5);
     u.uAmount.value = amount;
     u.uScale.value = pixelScale * (fp > 0.5 ? 0.06 : 0.1);
-    u.uBox.value = fp > 0.5 ? 26 : this.box;
+    u.uBox.value = boxOverride ?? (fp > 0.5 ? 26 : this.box);
     this.points.visible = amount > 0.01;
   }
 }

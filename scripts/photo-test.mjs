@@ -1,0 +1,22 @@
+import { createRequire } from 'module';
+import fs from 'fs';
+const require = createRequire(import.meta.url);
+const pw = require('/opt/node22/lib/node_modules/playwright');
+const SP = process.argv[2];
+const browser = await pw.chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+const page = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage();
+await page.goto('http://localhost:5173/?autostart=1&skipTutorial=1');
+await page.waitForTimeout(3000);
+const urls = await page.evaluate(() => {
+  const g = window.__game;
+  const V = g.boat.pos.constructor;
+  for (let i = 0; i < 120; i++) g.step(1 / 60);
+  const ph = g.photos;
+  ph.request('t1', 'deck centre', () => g.boat.localToWorld(new V(0, 0.8, -1), new V()), 0);
+  ph.request('t2', 'table', () => g.boat.localToWorld(new V(-0.05, 0.9, 1.0), new V()), 0);
+  for (let i = 0; i < 3; i++) g.step(1 / 60);
+  return { photos: ph.photos.map(p => p.img), boat: g.boat.pos.toArray(), yaw: g.boat.yaw };
+});
+urls.photos.forEach((u, i) => fs.writeFileSync(`${SP}/photo${i}.jpg`, Buffer.from(u.split(',')[1], 'base64')));
+console.log(JSON.stringify({ n: urls.photos.length, boat: urls.boat, yaw: urls.yaw }));
+await browser.close();

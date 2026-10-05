@@ -1,0 +1,12 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const pw = require('/opt/node22/lib/node_modules/playwright');
+const SP = process.argv[2];
+const browser = await pw.chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+const page = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage();
+await page.goto('http://localhost:5173/?autostart=1&skipTutorial=1');
+await page.waitForTimeout(3000);
+await page.evaluate(() => { const g = window.__game; const V = g.boat.pos.constructor; for (let i = 0; i < 12; i++) g.crabs.tank.push({ species: ['red','snow','blue','golden'][i % 4], weight: 2 + (i % 3), correct: i !== 5, at: 0 }); g.trip.end(); });
+await page.waitForTimeout(6000);
+await page.screenshot({ path: SP + '/m8-harbor1.png' });
+await browser.close();
