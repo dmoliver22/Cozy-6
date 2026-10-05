@@ -4,6 +4,7 @@
  * where they flop back aboard. Nobody waits long: after 25 s the crane hook fishes them out.
  */
 import * as THREE from 'three';
+import { later } from '../core/schedule';
 import { config } from '../config';
 import { clamp, easeInOut, lerp } from '../core/math';
 import { ITEM_DEFS, type Item } from '../deck/items';
@@ -226,7 +227,7 @@ export class RescueSystem {
     const holder = this.holder;
     this.ctx.items.toDeck(this.ring, new THREE.Vector3(side * (hw - 0.7), 1.2, z), new THREE.Vector3(-side, 1, 0));
     this.holder = null;
-    if (holder && holder.isUp) setTimeout(() => holder.isUp && !holder.held && this.ring.mode === 'deck' && holder.grab(this.ring), 400);
+    if (holder && holder.isUp) later((400) / 1000, () => holder.isUp && !holder.held && this.ring.mode === 'deck' && holder.grab(this.ring));
   }
 
   // ---------------------------------------------------------------- crane

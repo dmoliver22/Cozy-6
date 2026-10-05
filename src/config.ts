@@ -191,16 +191,17 @@ export const config = {
     potMass: 300,
     potSize: [2, 0.9, 2] as [number, number, number],
     potSpacing: 26,
-    soakFillPerMin: 6.5, // crab per minute in an average spot
-    maxCatchBodies: 16,
+    soakFillPerMin: 3.4, // crab per minute in an average spot
+    maxCatchBodies: 10,
     haulSpeed: 1.25, // m/s line speed
     fasterHaulerScale: 1.6,
     potDepth: 9,
-    hangLength: 1.6,
+    hangLength: 1.65,
     swingDamping: 0.12,
     levelWindowDeg: 4.5,
     grappleRange: 14,
-    grappleHookRadius: 1.8,
+    grappleHookRadius: 2.4,
+    aimAssistRadius: 3.5, // throws at the sea snap to a buoy / swimmer this close to the aim point
     buoyAlongsideDist: 11,
     tankCapacity: 70,
     biggerTankScale: 1.5,

@@ -61,7 +61,9 @@ export const L = {
   launcherSpot: new THREE.Vector3(-1.25, 0, -0.75),
   davitBase: new THREE.Vector3(-2.95, 0, 2.6),
   davitTop: new THREE.Vector3(-2.95, 4.3, 2.6),
-  block: new THREE.Vector3(-3.75, 4.05, 1.1),
+  block: new THREE.Vector3(-3.0, 4.0, 1.1),
+  /** where a hauled pot rises out of the sea (clear of the hull), local XZ */
+  riseX: -4.45,
   haulerLever: new THREE.Vector3(-2.6, 1.05, 2.6),
   haulerSpot: new THREE.Vector3(-2.25, 0, 2.75),
   table: { center: new THREE.Vector3(-0.05, 0.9, 1.0), half: new THREE.Vector3(0.95, 0.05, 1.1) },

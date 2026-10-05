@@ -30,6 +30,11 @@ import { DeckWash } from '../deck/wash';
 import { RescueSystem } from '../crew/rescue';
 import { SprayFx } from '../sea/sprayFx';
 import { Feedback } from './feedback';
+import { PotSystem } from '../fishing/pots';
+import { GrappleSystem } from '../fishing/grapple';
+import { SpecialSystem } from '../fishing/specials';
+import { Navigator } from '../boat/navigator';
+import { schedule } from '../core/schedule';
 import type { Ctx } from './ctx';
 import type { Crew } from '../crew/crew';
 import type { Item } from '../deck/items';
@@ -65,6 +70,10 @@ export class Game {
   readonly rescue: RescueSystem;
   readonly spray: SprayFx;
   readonly feedback: Feedback;
+  readonly pots: PotSystem;
+  readonly grapple: GrappleSystem;
+  readonly specials: SpecialSystem;
+  readonly nav: Navigator;
   renderTime = 0;
   readonly boatRenderPos = new THREE.Vector3();
   readonly boatRenderQuat = new THREE.Quaternion();
@@ -114,14 +123,36 @@ export class Game {
     this.rogue = new RogueDirector(this.ctx);
     this.wash = new DeckWash(this.ctx);
     this.rescue = new RescueSystem(this.ctx);
-    this.ctx.sys.onThrow = (c: Crew, it: Item) => this.rescue.onThrow(c, it);
+    this.pots = new PotSystem(this.ctx);
+    this.grapple = new GrappleSystem(this.ctx);
+    this.specials = new SpecialSystem(this.ctx);
+    this.nav = new Navigator(this.boat);
+    this.ctx.sys.nav = this.nav;
+    this.ctx.sys.onThrow = (c: Crew, it: Item) => {
+      this.rescue.onThrow(c, it);
+      this.grapple.onThrow(c, it);
+    };
+
+    // aim assist for throws into the sea: the grapple finds a buoy, the ring finds a swimmer
+    this.ctx.sys.aimAssist = (it: Item, target: THREE.Vector3): THREE.Vector3 | undefined => {
+      const r = config.fishing.aimAssistRadius;
+      const cands: THREE.Vector3[] = [];
+      if (it.kind === 'grapple') for (const pot of this.pots.soakingPots()) cands.push(this.boat.worldToLocal(pot.buoy!.wp, new THREE.Vector3()));
+      if (it.kind === 'ring') for (const c of this.crew.overboard()) cands.push(this.boat.worldToLocal(c.wp, new THREE.Vector3()));
+      let best: THREE.Vector3 | undefined;
+      let bd = r;
+      for (const c of cands) {
+        const d = Math.hypot(c.x - target.x, c.z - target.z);
+        if (d < bd) {
+          bd = d;
+          best = c;
+        }
+      }
+      return best;
+    };
 
     // loose things on deck
     for (const p of L.buckets) items.add(ITEM_DEFS.bucket, makeBucket(), p.clone().setY(0.2));
-    const rng = this.ctx.rng.stream('test');
-    for (let i = 0; i < 4; i++) {
-      this.crabs.spawn(new THREE.Vector3(-0.4 + i * 0.25, 1.1, 0.8), this.crabs.roll(rng.pick(['red', 'red', 'snow', 'blue'] as const), rng));
-    }
 
     // --- input & UI
     this.hud = new Hud(this.ui);
@@ -134,6 +165,7 @@ export class Game {
     });
     this.player.touch = this.touch;
     this.aim = new AimViz(this.boatGroup);
+    this.ctx.sys.hud = this.hud;
     this.loop = new FixedLoop({
       step: (dt) => this.step(dt),
       render: (alpha, dtReal, dtSim) => this.render(alpha, dtReal, dtSim),
@@ -163,17 +195,23 @@ export class Game {
   step(dt: number): void {
     const ctx = this.ctx;
     this.sea.time += dt;
+    schedule.step(dt);
     this.rogue.step(dt);
+    this.nav.step(dt);
     this.boat.step(dt, this.sea);
     this.crew.step(dt);
     this.rescue.step(dt);
+    this.grapple.step(dt);
+    this.pots.step(dt);
     this.ctx.items.stepPre(dt);
     this.crabs.step(dt);
+    this.specials.step(dt);
     this.wash.step(dt);
     this.spray.step(dt);
     this.ctx.surface.step(dt, this.dw.gDir);
     this.dw.step(dt, this.boat);
     this.ctx.items.stepPost(dt);
+    this.pots.capture();
     this.crew.postStep(dt);
     ctx.time += dt;
   }
@@ -195,6 +233,8 @@ export class Game {
     this.crabs.render();
     this.crew.render(alpha, dtReal, this.boatRenderPos, this.boatRenderQuat);
     this.rescue.render(this.boatRenderPos, this.boatRenderQuat);
+    this.pots.render(alpha, this.boatRenderPos, this.boatRenderQuat);
+    this.grapple.render();
     this.wash.render(this.ctx.time);
     this.spray.update(dtSim);
 
@@ -203,7 +243,8 @@ export class Game {
     const holding = player.held;
     if (player.throwAiming && holding && inp.aim) {
       holding.localPos(_v);
-      this.aim.showArc(_v, inp.aim, this.dw.gLocal);
+      const assisted = this.ctx.sys.aimAssist(holding, inp.aim) as THREE.Vector3 | undefined;
+      this.aim.showArc(_v, assisted ?? inp.aim, this.dw.gLocal);
     } else this.aim.showArc(null, null, this.dw.gLocal);
     this.aim.setReticle(inp.aim, this.rig.mode === 'overhead' && this.player.lastDevice === 'mouse');
     const tgt = player.target;
@@ -238,6 +279,12 @@ export class Game {
     // HUD
     this.hud.setWave(this.rogue.hudState(), player.braced || player.crouch);
     const inds = this.crew.overboard().map((c) => ({ world: c.wp.clone().setY(c.wp.y + 1.2), icon: '🛟', color: '#e8742b', label: c.id === 'player' ? 'You' : c.name }));
+    for (const pot of this.pots.soakingPots()) {
+      const b = pot.buoy!;
+      if (b.mode === 'sea' && b.visible) inds.push({ world: b.wp.clone().setY(b.wp.y + 2.2), icon: '🟠', color: '#f2c230', label: String(pot.number) });
+    }
+    const hang = this.pots.hangingPot;
+    this.hud.setLevel(!!hang, this.pots.deckLevelDeg(), config.fishing.levelWindowDeg);
     this.hud.setIndicators(inds, this.stage.camera);
     this.hud.update(dtReal, this.stage.camera, this.boatGroup.matrixWorld);
     this.updateAudio();

@@ -307,6 +307,12 @@ export class ItemManager {
         const dz = this.drift.y * config.sea.swimmerDrift;
         it.wv.x += ((dx - it.wv.x) * 0.8 + it.seaPull.x) * dt;
         it.wv.z += ((dz - it.wv.z) * 0.8 + it.seaPull.z) * dt;
+        const anchor = it.data.anchor as THREE.Vector3 | undefined;
+        if (anchor) {
+          // buoys are tethered to their pot: gentle spring back to the anchor
+          it.wv.x += ((anchor.x - it.wp.x) * 0.5 - it.wv.x * 0.6) * dt;
+          it.wv.z += ((anchor.z - it.wp.z) * 0.5 - it.wv.z * 0.6) * dt;
+        }
         it.wp.addScaledVector(it.wv, dt);
         this.sea.normal(it.wp.x, it.wp.z, _n);
         _q.setFromUnitVectors(UP, _n);

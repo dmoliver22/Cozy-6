@@ -4,6 +4,7 @@
  * carrying & throwing, and the overboard swimmer state. Acts only through CrewInput.
  */
 import RAPIER from '@dimforge/rapier3d-compat';
+import { later } from '../core/schedule';
 import * as THREE from 'three';
 import { config, DEG } from '../config';
 import { clamp, damp, dampAngle, solveBallistic, throwFlightTime } from '../core/math';
@@ -469,9 +470,9 @@ export class Crew {
       const col = it.collider;
       const g = it.def.group ?? CG.item;
       // restore collisions shortly after so it doesn't pop off the carrier
-      setTimeout(() => {
+      later((220) / 1000, () => {
         if (it.collider === col) col.setCollisionGroups(g);
-      }, 220);
+      });
     }
     this.lastHeldTime = this.ctx.time;
     return it;
@@ -485,6 +486,7 @@ export class Crew {
   throwTo(target: THREE.Vector3): void {
     const it = this.held;
     if (!it || !it.body) return;
+    target = (this.ctx.sys.aimAssist?.(it, target) as THREE.Vector3 | undefined) ?? target;
     const t = it.body.translation();
     const from = _v.set(t.x, t.y, t.z);
     const d = Math.hypot(target.x - from.x, target.z - from.z);
@@ -508,15 +510,18 @@ export class Crew {
     }
     const b = it.body;
     const hp = this.holdPoint(_v);
-    if (it.def.carry === 'push') {
+    const guide = it.data.guide as THREE.Vector3 | undefined;
+    if (guide) hp.copy(guide); // e.g. guiding a hanging pot over the cradle
+    if (it.def.carry === 'push' && !guide) {
       // too heavy to lift: push/pull horizontally
       hp.y = b.translation().y;
     }
     const t = b.translation();
     const lv = b.linvel();
     const cv = this.body.linvel();
-    const k = config.crew.carrySpring;
-    const cdmp = config.crew.carryDamping;
+    // a guided load (a pot on its line) gets a soft pull so it still swings with the boat
+    const k = guide ? 3.5 : config.crew.carrySpring;
+    const cdmp = guide ? 0.8 : config.crew.carryDamping;
     const m = it.mass;
     const g = this.ctx.dw.gLocal;
     const fx = (k * (hp.x - t.x) - cdmp * (lv.x - cv.x)) * m;
@@ -524,7 +529,7 @@ export class Crew {
     const fz = (k * (hp.z - t.z) - cdmp * (lv.z - cv.z)) * m;
     if (it.def.carry === 'push') fy = 0;
     const f = _v2.set(fx - (it.def.carry === 'push' ? 0 : g.x * m), fy, fz - (it.def.carry === 'push' ? 0 : g.z * m));
-    const maxF = it.def.carry === 'push' ? config.crew.carryMaxForce * 0.9 : config.crew.carryMaxForce;
+    const maxF = guide ? config.crew.carryMaxForce * 1.5 : it.def.carry === 'push' ? config.crew.carryMaxForce * 0.9 : config.crew.carryMaxForce;
     if (f.length() > maxF) f.setLength(maxF);
     b.applyImpulse({ x: f.x * dt, y: f.y * dt, z: f.z * dt }, true);
     // reaction on the carrier (heavy things pull you around a bit)
@@ -549,7 +554,7 @@ export class Crew {
       b.setAngvel({ x: av.x + (ax * ang * kk - av.x * cc) * dt, y: av.y + (ay * ang * kk - av.y * cc + wig) * dt, z: av.z + (az * ang * kk - av.z * cc + wig * 0.5) * dt }, true);
     }
     // dropped if it gets yanked too far away (snagged)
-    if (_v3.set(t.x, t.y, t.z).distanceTo(hp) > 1.8) this.drop();
+    if (!guide && _v3.set(t.x, t.y, t.z).distanceTo(hp) > 1.8 + (it.def.carry === 'push' ? 1.2 : 0)) this.drop();
   }
 
   // -------------------------------------------------------------------------
@@ -881,7 +886,7 @@ export class Crew {
     // like a seal: flop down for a moment
     this.knockdown(inward.clone().multiplyScalar(0.6), 'flop', { spin: 3, noHat: true });
     sfx.play('flop', { volume: 0.9 });
-    setTimeout(() => sfx.play('giggle', { pitch: this.voicePitch }), 350);
+    later((350) / 1000, () => sfx.play('giggle', { pitch: this.voicePitch }));
   }
 
   // -------------------------------------------------------------------------

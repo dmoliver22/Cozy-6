@@ -32,6 +32,8 @@ export class Boat {
   readonly heave: Spring1;
   readonly pitch: Spring1;
   readonly roll: Spring1;
+  /** When set, the boat follows a planned path exactly (captain's maneuvers). */
+  pathPose: { x: number; z: number; yaw: number; speed: number } | null = null;
   /** Additional roll multiplier (ice → top-heavy). */
   rollScale = 1;
 
@@ -61,12 +63,14 @@ export class Boat {
     return new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
   }
 
-  /** Kick the roll spring (rogue impact). Positive = port side up. */
+  /** Kick the roll spring (rogue impact), spread over ~0.15 s so it reads as a shove, not a glitch. + = port up. */
+  private rollKick = 0;
+  private pitchKick = 0;
   kickRoll(rad: number): void {
-    this.roll.v += rad * this.roll.omega;
+    this.rollKick += rad;
   }
   kickPitch(rad: number): void {
-    this.pitch.v += rad * this.pitch.omega;
+    this.pitchKick += rad;
   }
   landingDip(m: number): void {
     this.dip.v -= m * this.dip.omega * 2.2;
@@ -85,11 +89,22 @@ export class Boat {
     const authority = clamp(0.35 + Math.abs(this.speed) / 2.5, 0, 1);
     const tr = clamp(this.targetYawRate, -cb.yawRateMax, cb.yawRateMax) * authority;
     this.yawRate += clamp(tr - this.yawRate, -cb.yawAccel * dt, cb.yawAccel * dt);
-    this.yaw = wrapAngle(this.yaw + this.yawRate * dt);
-    const fx = Math.sin(this.yaw),
-      fz = Math.cos(this.yaw);
-    this.x += fx * this.speed * dt;
-    this.z += fz * this.speed * dt;
+    if (this.pathPose) {
+      const pp = this.pathPose;
+      // heading follows the path, rate-limited so the deck never feels a yaw snap
+      const dy = clamp(wrapAngle(pp.yaw - this.yaw), -0.55 * dt, 0.55 * dt);
+      this.yawRate += clamp(dy / dt - this.yawRate, -cb.yawAccel * 2 * dt, cb.yawAccel * 2 * dt);
+      this.yaw = wrapAngle(this.yaw + this.yawRate * dt);
+      this.speed = pp.speed;
+      this.x = pp.x;
+      this.z = pp.z;
+    } else {
+      this.yaw = wrapAngle(this.yaw + this.yawRate * dt);
+      const fx = Math.sin(this.yaw),
+        fz = Math.cos(this.yaw);
+      this.x += fx * this.speed * dt;
+      this.z += fz * this.speed * dt;
+    }
 
     // --- sample the sea at 6 hull points (rotated by yaw only)
     const cy = Math.cos(this.yaw),
@@ -122,6 +137,13 @@ export class Boat {
     this.heave.omega = rr.heave + ex.heave * rk;
     this.pitch.omega = rr.pitch + ex.pitch * rk;
     this.roll.omega = rr.roll + ex.roll * rk;
+    const kk = Math.min(1, dt / 0.15);
+    const rk2 = this.rollKick * kk,
+      pk2 = this.pitchKick * kk;
+    this.roll.v += rk2 * this.roll.omega;
+    this.pitch.v += pk2 * this.pitch.omega;
+    this.rollKick -= rk2;
+    this.pitchKick -= pk2;
     this.heave.step(mean, dt);
     this.pitch.step(this.targetPitch, dt);
     this.roll.step(this.targetRoll, dt);

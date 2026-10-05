@@ -75,7 +75,7 @@ html, body {
 .hud-radio.urgent { background: #f2c230; }
 .hud-radio-who { font-weight: 900; font-size: 13px; opacity: .8; }
 .hud-radio-text { font-size: 17px; font-weight: 700; }
-.hud-toast { position: absolute; left: 50%; top: calc(170px + var(--safe-t)); transform: translateX(-50%); font-weight: 800; font-size: 18px; text-shadow: 0 2px 4px rgba(0,0,0,.7); opacity: 0; transition: opacity .2s; white-space: nowrap; }
+.hud-toast { position: absolute; left: 50%; top: calc(170px + var(--safe-t)); transform: translateX(-50%); font-weight: 800; font-size: 17px; text-shadow: 0 1px 2px rgba(0,0,0,.8); background: rgba(20,32,38,.72); padding: 6px 14px; border-radius: 999px; opacity: 0; transition: opacity .2s; white-space: nowrap; max-width: 92vw; overflow: hidden; text-overflow: ellipsis; }
 .hud-toast.on { opacity: 1; }
 .hud-big { position: absolute; left: 50%; top: 36%; transform: translate(-50%,-50%) scale(.6); font: 900 54px Georgia, serif; color: var(--slicker); text-shadow: 0 4px 0 #8a5a12, 0 8px 18px rgba(0,0,0,.4); opacity: 0; white-space: nowrap; }
 .hud-big.on { animation: bigpop 1.6s ease-out forwards; }

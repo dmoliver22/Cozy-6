@@ -137,7 +137,7 @@ export function buildDeckStructure(dw: DeckWorld): DeckStructure {
   const cradleCollider = world.createCollider(cd, cradleBody);
   dw.setOwner(cradleCollider, { kind: 'cradle' });
   // outboard stop on the cradle
-  const stop = RAPIER.ColliderDesc.cuboid(0.06, 0.2, c.half.z).setTranslation(-c.half.x - 0.02, 0.16, 0).setCollisionGroups(CG.static);
+  const stop = RAPIER.ColliderDesc.cuboid(0.06, 0.12, c.half.z).setTranslation(-c.half.x - 0.02, 0.1, 0).setCollisionGroups(CG.static);
   dw.setOwner(world.createCollider(stop, cradleBody), { kind: 'cradle' });
 
   return { zoneColliders, railColliders, cradleBody, cradleCollider, interiorFloor };

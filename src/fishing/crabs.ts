@@ -3,6 +3,7 @@
  * and get sorted: big males into the tank hatch, females & small ones back over the rail.
  */
 import * as THREE from 'three';
+import { later } from '../core/schedule';
 import { config } from '../config';
 import { ITEM_DEFS, type Item, type ItemManager } from '../deck/items';
 import { crabBodyGeometry, crabFlapGeometry, SPECIES_COLOR, type CrabSex } from '../art/crab';
@@ -102,7 +103,7 @@ export class CrabSystem {
     if (correct) this.released.correct++;
     else this.released.wrong++;
     events.emit('crabReleased', { kind: d.species, correct });
-    setTimeout(() => sfx.play('plop', { pitch: 1.3, volume: 0.6 }), 450);
+    later((450) / 1000, () => sfx.play('plop', { pitch: 1.3, volume: 0.6 }));
   }
 
   /** Crab dropped into the tank hatch. */

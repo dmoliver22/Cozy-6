@@ -374,7 +374,7 @@ export function makeBoat(): BoatArt {
   cradle.add(box(c.half.x * 2, c.half.y * 2, 0.12, cradleMat, 0, 0, -c.half.z + 0.06));
   cradle.add(box(c.half.x * 2, c.half.y * 2, 0.12, cradleMat, 0, 0, c.half.z - 0.06));
   for (let i = -2; i <= 2; i++) cradle.add(box(0.08, 0.08, c.half.z * 2, cradleMat, i * 0.45, 0, 0));
-  cradle.add(box(0.12, 0.35, c.half.z * 2, toon(P.slicker), -c.half.x - 0.02, 0.14, 0)); // outboard stop
+  cradle.add(box(0.12, 0.24, c.half.z * 2, toon(P.slicker), -c.half.x - 0.02, 0.1, 0)); // outboard stop
   root.add(cradle);
   // cradle support legs
   for (const z of [c.center.z - 0.8, c.center.z + 0.8]) {

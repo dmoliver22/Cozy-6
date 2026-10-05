@@ -4,6 +4,7 @@
  * The wave is real: it lives in Sea.rogue and lifts/rolls the boat through the shared wave function.
  */
 import { config, DEG } from '../config';
+import { later } from '../core/schedule';
 import { smoothstep } from '../core/math';
 import { events, type RogueSide } from '../core/events';
 import { sfx } from '../audio';
@@ -177,7 +178,7 @@ export class RogueDirector {
     this.ctx.sys.wash?.start(set.side, set.amp);
     events.emit('rogueImpact', { side: set.side, amp: set.amp });
     // "Held!" pops slightly after the wash has passed
-    setTimeout(() => {
+    later((650) / 1000, () => {
       for (const c of crew) {
         if (set.heldAt.get(c.id) && c.isUp && c.braced) {
           events.emit('held', { crew: c.id });
@@ -185,7 +186,7 @@ export class RogueDirector {
           if (c.vocalCooldown <= 0) sfx.play('hup', { pitch: c.voicePitch, volume: 0.7 });
         }
       }
-    }, 650);
+    });
   }
 
   private resolve(set: RogueSet, crew: Crew[]): void {

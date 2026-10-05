@@ -28,7 +28,7 @@ export function registerItemInteractables(items: { onAdd?: (it: Item) => void; o
       id: interactableId(),
       name: it.def.label,
       itemRef: it,
-      radius: it.def.carry === 'push' ? 1.0 : 0.15,
+      radius: it.kind === 'pot' ? 2.3 : it.def.carry === 'push' ? 1.0 : 0.15,
       priority: it.kind === 'crab' ? 0.2 : it.kind === 'hat' ? 0.3 : 0,
       pos(out: THREE.Vector3) {
         return it.mode === 'fixed' ? out.copy(it.fixedPos) : it.localPos(out);

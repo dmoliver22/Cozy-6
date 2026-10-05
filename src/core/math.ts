@@ -64,5 +64,6 @@ export function fmtInt(n: number): string {
 export function throwFlightTime(from: THREE.Vector3, to: THREE.Vector3, overRail: boolean): number {
   const d = Math.hypot(to.x - from.x, to.z - from.z);
   const T = clamp(0.38 + d * 0.06, 0.42, 1.35);
-  return overRail ? Math.max(T, clamp(0.72 + d * 0.035, 0.75, 1.5)) : T;
+  // lofted so the arc clears the rail, the davit and a pot sitting on the cradle
+  return overRail ? Math.max(T, clamp(1.15 + d * 0.025, 1.2, 1.65)) : T;
 }
