@@ -14,6 +14,7 @@ export class FixedLoop {
   private last = 0;
   private running = false;
   timeScale = 1;
+  paused = false;
   simTime = 0;
   frame = 0;
 
@@ -40,7 +41,7 @@ export class FixedLoop {
     this.last = now;
     if (!(dtReal > 0)) dtReal = 0;
     if (dtReal > 0.25) dtReal = 0.25; // tab was hidden
-    this.acc += dtReal * this.timeScale;
+    if (!this.paused) this.acc += dtReal * this.timeScale;
     let steps = 0;
     const max = config.sim.maxStepsPerFrame;
     while (this.acc >= this.dt && steps < max) {

@@ -41,6 +41,11 @@ import type { Item } from '../deck/items';
 import { clamp } from '../core/math';
 import { sfx, music } from '../audio';
 import type { RogueSide } from '../core/events';
+import { loadSettings, saveSettings, type Settings } from '../core/settings';
+import { PauseMenu } from '../ui/menu';
+import { FpHands } from '../ui/fpHands';
+import { haptics } from '../core/haptics';
+import type { Quality } from './stage';
 
 const _p = new THREE.Vector3();
 const _m = new THREE.Matrix4();
@@ -78,7 +83,13 @@ export class Game {
   readonly boatRenderPos = new THREE.Vector3();
   readonly boatRenderQuat = new THREE.Quaternion();
   private loops: Record<string, ReturnType<typeof sfx.loop>> = {};
-  paused = false;
+  readonly settings: Settings;
+  readonly menu: PauseMenu;
+  readonly hands: FpHands;
+  private reticle: HTMLDivElement;
+  private rotateHint: HTMLDivElement;
+  private frameTimes: number[] = [];
+  private qualityCooldown = 5;
 
   constructor(container: HTMLElement) {
     this.stage = new Stage(container);
@@ -158,14 +169,34 @@ export class Game {
     this.hud = new Hud(this.ui);
     this.touch = new TouchControls(this.ui);
     this.player = new PlayerController(this.stage.renderer.domElement, this.ctx, this.rig, this.stage.camera, {
-      toggleView: () => this.rig.toggle(),
-      ping: () => {},
-      pause: () => {},
+      toggleView: () => this.toggleView(),
+      ping: (p) => this.ctx.sys.ping?.(p),
+      pause: () => this.menu.toggle(),
       zoom: (d) => (this.rig.zoom = clamp(this.rig.zoom + d * 0.08, 0, 1)),
     });
     this.player.touch = this.touch;
     this.aim = new AimViz(this.boatGroup);
     this.ctx.sys.hud = this.hud;
+    this.stage.scene.add(this.stage.camera); // so first-person mittens (camera children) render
+    this.hands = new FpHands(this.stage.camera);
+    this.reticle = document.createElement('div');
+    this.reticle.className = 'reticle';
+    this.ui.appendChild(this.reticle);
+    this.rotateHint = document.createElement('div');
+    this.rotateHint.className = 'rotate-hint';
+    this.rotateHint.textContent = '↻ Turn your phone sideways for first person';
+    this.ui.appendChild(this.rotateHint);
+    this.settings = loadSettings();
+    this.menu = new PauseMenu(this.ui, this.settings, {
+      onChange: (st) => this.applySettings(st),
+      onResume: () => (this.loop.paused = false),
+      onHarbor: () => this.ctx.sys.trip?.runForHome?.(),
+    });
+    const origShow = this.menu.show.bind(this.menu);
+    this.menu.show = () => {
+      origShow();
+      this.loop.paused = true;
+    };
     this.loop = new FixedLoop({
       step: (dt) => this.step(dt),
       render: (alpha, dtReal, dtSim) => this.render(alpha, dtReal, dtSim),
@@ -186,6 +217,56 @@ export class Game {
     music.start();
 
     this.setupDebugKeys();
+    this.applySettings(this.settings);
+    if (this.stage.isPhone) this.rig.zoom = 0.5;
+  }
+
+  applySettings(st: Settings): void {
+    saveSettings(st);
+    haptics.enabled = st.haptics;
+    sfx.setMaster(st.volume);
+    sfx.setMusicVolume(st.music);
+    this.player.invertLook = st.invertLook;
+    this.hud.reduceFlashing = st.reduceFlashing;
+    this.rig.reduceFlashing = st.reduceFlashing;
+    if (st.quality !== 'auto' && st.quality !== this.stage.quality) this.setQuality(st.quality);
+  }
+
+  setQuality(q: Quality): void {
+    this.stage.applyQuality(q);
+    this.ctx.sys.weatherFx?.setQuality?.(q);
+  }
+
+  toggleView(): void {
+    if (this.rig.mode === 'overhead' && this.stage.portrait) {
+      this.rotateHint.classList.add('on');
+      setTimeout(() => this.rotateHint.classList.remove('on'), 1800);
+      return;
+    }
+    this.rig.toggle();
+    if (this.rig.mode === 'overhead') this.player.mouse.exitLock();
+    sfx.play('uiTap', { volume: 0.5 });
+  }
+
+  /** Auto quality: drop a tier if frames stay slow, creep back up if there's headroom. */
+  private autoQuality(dtReal: number): void {
+    if (this.settings.quality !== 'auto') return;
+    this.frameTimes.push(dtReal * 1000);
+    if (this.frameTimes.length > 90) this.frameTimes.shift();
+    this.qualityCooldown -= dtReal;
+    if (this.qualityCooldown > 0 || this.frameTimes.length < 60) return;
+    const avg = this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length;
+    const order: Quality[] = ['low', 'medium', 'high'];
+    const i = order.indexOf(this.stage.quality);
+    if (avg > config.render.autoDowngradeMs && i > 0) {
+      this.setQuality(order[i - 1]);
+      this.qualityCooldown = config.render.autoDowngradeWindowSec * 2;
+      this.frameTimes.length = 0;
+    } else if (avg < config.render.autoUpgradeMs && i < 2 && !this.stage.isPhone) {
+      this.setQuality(order[i + 1]);
+      this.qualityCooldown = 20;
+      this.frameTimes.length = 0;
+    }
   }
 
   start(): void {
@@ -219,6 +300,7 @@ export class Game {
   render(alpha: number, dtReal: number, dtSim: number): void {
     this.debug.tick(dtReal);
     this.feedback.update(dtReal);
+    if (!this.loop.paused) this.autoQuality(dtReal);
     const player = this.crew.player;
     this.player.update(dtReal, player);
 
@@ -265,12 +347,18 @@ export class Game {
       focusWorld: _p,
       headWorld: head,
       portrait: this.stage.portrait,
-      rollFactor: config.camera.fp.rollFactor,
-      headBob: true,
+      rollFactor: this.settings.comfortRoll,
+      headBob: this.settings.headBob,
       walkPhase: player.walkPhase,
       walkAmount: player.walkAmount,
     });
     player.view.root.visible = this.rig.blend < 0.6;
+    player.view.ring.visible = player.view.ring.visible && this.rig.blend < 0.6;
+    this.stage.camera.updateMatrixWorld(true);
+    this.hands.update(dtReal, this.stage.camera, player, this.boatGroup.matrixWorld, this.rig.blend, this.ctx.time);
+    this.reticle.classList.toggle('on', this.rig.blend > 0.9 && !player.inSea);
+    this.reticle.classList.toggle('hot', !!player.target);
+    if (this.rig.mode === 'fp' && this.stage.portrait) this.rig.setMode('overhead');
     this.stage.fpMode = this.rig.blend;
     this.stage.seaMesh.update(this.sea, this.renderTime, this.boatRenderPos, _m, this.boat.speed);
     this.stage.setWeatherLook(0, this.boatRenderPos);

@@ -24,6 +24,7 @@ let result = null;
 if (evalJs) {
   try { result = await page.evaluate(evalJs); } catch (e) { result = 'EVAL ERROR: ' + e.message; }
 }
+if (process.env.WAIT_AFTER) await page.waitForTimeout(Number(process.env.WAIT_AFTER));
 await page.screenshot({ path: out });
 console.log(logs.filter(l=>!l.includes("useProgram")).slice(-40).join('\n'));
 if (result !== null) console.log('RESULT:', typeof result === 'string' ? result : JSON.stringify(result, null, 1));
