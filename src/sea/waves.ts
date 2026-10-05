@@ -187,7 +187,8 @@ vec3 seaDisplace(vec2 p, float distFade, out vec3 nrm, out float pinch, out floa
     float kq = A * uRogueB.y * uRogueA.z * cu;
     n.y -= kq;
     pinch += kq;
-    rogueCrest = smoothstep(0.2, 1.0, cu) * smoothstep(0.6, 2.2, A);
+    // a thin white line along the top of the crest (front face), not the whole hill
+    rogueCrest = smoothstep(0.8, 0.97, cu) * smoothstep(0.0, 0.25, -su) * smoothstep(0.9, 2.4, A);
   }
   nrm = normalize(n);
   return d;

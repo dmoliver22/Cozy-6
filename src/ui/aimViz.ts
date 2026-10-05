@@ -3,7 +3,8 @@
  */
 import * as THREE from 'three';
 import { config } from '../config';
-import { solveBallistic, clamp } from '../core/math';
+import { solveBallistic, throwFlightTime } from '../core/math';
+import { ItemManager } from '../deck/items';
 
 const N = 28;
 const _v = new THREE.Vector3();
@@ -49,8 +50,7 @@ export class AimViz {
       this.landing.visible = false;
       return;
     }
-    const d = Math.hypot(to.x - from.x, to.z - from.z);
-    const T = clamp(0.38 + d * 0.06, 0.42, 1.35);
+    const T = throwFlightTime(from, to, ItemManager.outsideHull(to, 0));
     const v = solveBallistic(from, to, T, gLocal, _v2);
     const maxS = config.crew.throwMaxSpeed;
     if (v.length() > maxS) v.setLength(maxS);

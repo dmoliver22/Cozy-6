@@ -583,8 +583,9 @@ class Score {
   }
 
   private strum(t: number, ch: Chord, vel: number, down: boolean, hold: number): void {
+    // close triad around G3–F#4 plus the root underneath (e.g. F3 A3 C4 F4)
     const notes = ch.tones.slice(0, 3).map((pc) => fit(pc, 55));
-    notes.push(fit(ch.root, 62));
+    notes.push(fit(ch.root, 48));
     notes.sort((a, b) => a - b);
     if (!down) notes.reverse();
     const gap = down ? 0.016 : 0.011;

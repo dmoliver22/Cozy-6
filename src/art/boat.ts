@@ -73,7 +73,7 @@ function hullGeometry(): THREE.BufferGeometry {
   return g;
 }
 
-function deckGeometry(): THREE.BufferGeometry {
+export function deckGeometry(): THREE.BufferGeometry {
   const shape = new THREE.Shape();
   const n = 30;
   for (let i = 0; i <= n; i++) {

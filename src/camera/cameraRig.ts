@@ -145,11 +145,13 @@ export class CameraRig {
     // --- shake (overhead: config amplitude; first person: scaled by comfort setting)
     if (this.shake > 0.001) {
       this.shakeSeed += dt * 60;
-      const amp = this.shake * lerp(1, clamp(i.rollFactor / 0.3, 0, 1) * 0.6, b) * (this.reduceFlashing ? 0.4 : 1);
+      const comfort = clamp(i.rollFactor / 0.3, 0, 1.5);
+      // overhead: metres scaled to the camera distance; first person: small, scaled by comfort
+      const amp = this.shake * lerp(dist * 0.09, 0.25 * comfort, b) * (this.reduceFlashing ? 0.4 : 1);
       const s = this.shakeSeed;
       _v.set(Math.sin(s * 1.7) * amp, Math.sin(s * 2.3 + 1) * amp, Math.sin(s * 1.3 + 2) * amp);
-      this.camera.position.add(_v.multiplyScalar(lerp(1, 0.25, b)));
-      this.shake = damp(this.shake, 0, 6, dt);
+      this.camera.position.add(_v);
+      this.shake = damp(this.shake, 0, 5, dt);
     }
     this.pushIn = damp(this.pushIn, 0, 1.8, dt);
   }

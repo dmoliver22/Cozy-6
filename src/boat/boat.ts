@@ -114,6 +114,14 @@ export class Boat {
     this.targetPitch = clamp(-Math.atan2(bow - stern, L) * cb.pitchGain, -cb.maxPitchDeg * DEG, cb.maxPitchDeg * DEG);
     this.targetRoll = clamp(Math.atan2(port - stbd, B) * cb.rollGain * this.rollScale, -cb.maxRollDeg * DEG, cb.maxRollDeg * DEG);
 
+    // ride up a rogue face instead of being swamped by it
+    const r = sea.rogue;
+    const rk = r.active ? Math.min(1, r.amp / 2.4) : 0;
+    const rr = cb.responsiveness,
+      ex = cb.rogueResponsiveness;
+    this.heave.omega = rr.heave + ex.heave * rk;
+    this.pitch.omega = rr.pitch + ex.pitch * rk;
+    this.roll.omega = rr.roll + ex.roll * rk;
     this.heave.step(mean, dt);
     this.pitch.step(this.targetPitch, dt);
     this.roll.step(this.targetRoll, dt);

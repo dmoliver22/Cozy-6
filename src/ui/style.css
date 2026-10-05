@@ -54,3 +54,55 @@ html, body {
 .t-view { right: calc(26px + var(--safe-r)); bottom: calc(26px + var(--safe-b)); }
 .t-menu { left: calc(14px + var(--safe-l)); top: calc(14px + var(--safe-t)); }
 .t-sling { display: none; position: absolute; height: 4px; background: repeating-linear-gradient(90deg, #fff 0 8px, transparent 8px 14px); transform-origin: 0 50%; pointer-events: none; }
+
+/* ---- HUD ---- */
+.hud { position: absolute; inset: 0; pointer-events: none; }
+.hud .prompt { bottom: calc(22px + var(--safe-b)); }
+.hud-wave { position: absolute; left: 50%; top: calc(12px + var(--safe-t)); transform: translateX(-50%) scale(.8); width: 112px; height: 112px; opacity: 0; transition: opacity .2s, transform .2s; }
+.hud-wave.on { opacity: 1; transform: translateX(-50%) scale(1); }
+.hud-wave svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+.hud-wave circle { fill: rgba(20,32,38,.72); stroke-width: 9; }
+.hud-wave circle.bg { stroke: rgba(234,242,240,.25); }
+.hud-wave circle.arc { fill: none; stroke: var(--buoy); stroke-linecap: round; transition: stroke-dashoffset .1s linear; }
+.hud-wave.braced circle.arc { stroke: var(--good); }
+.hud-wave.urgent { animation: wavepulse .35s ease-in-out infinite alternate; }
+@keyframes wavepulse { from { transform: translateX(-50%) scale(1); } to { transform: translateX(-50%) scale(1.09); } }
+.hud-wave-icon { position: absolute; inset: 0; display: grid; place-items: center; font-size: 40px; }
+.hud-wave-side { position: absolute; left: 50%; top: 104px; transform: translateX(-50%); font-weight: 900; font-size: 15px; color: var(--slicker); white-space: nowrap; text-shadow: 0 2px 3px rgba(0,0,0,.6); }
+.hud-wave-label { position: absolute; left: 50%; top: 124px; transform: translateX(-50%); font-weight: 900; font-size: 22px; color: #fff; white-space: nowrap; text-shadow: 0 2px 4px rgba(0,0,0,.7); letter-spacing: 1px; }
+.hud-radio { position: absolute; left: calc(14px + var(--safe-l)); bottom: calc(86px + var(--safe-b)); max-width: min(360px, 60vw); background: rgba(240,166,90,.94); color: #2a1b0e; border-radius: 14px; padding: 8px 12px; box-shadow: 0 4px 12px rgba(0,0,0,.3); transform: translateY(12px); opacity: 0; transition: all .2s; }
+.hud-radio.on { opacity: 1; transform: none; }
+.hud-radio.urgent { background: #f2c230; }
+.hud-radio-who { font-weight: 900; font-size: 13px; opacity: .8; }
+.hud-radio-text { font-size: 17px; font-weight: 700; }
+.hud-toast { position: absolute; left: 50%; top: calc(170px + var(--safe-t)); transform: translateX(-50%); font-weight: 800; font-size: 18px; text-shadow: 0 2px 4px rgba(0,0,0,.7); opacity: 0; transition: opacity .2s; white-space: nowrap; }
+.hud-toast.on { opacity: 1; }
+.hud-big { position: absolute; left: 50%; top: 36%; transform: translate(-50%,-50%) scale(.6); font: 900 54px Georgia, serif; color: var(--slicker); text-shadow: 0 4px 0 #8a5a12, 0 8px 18px rgba(0,0,0,.4); opacity: 0; white-space: nowrap; }
+.hud-big.on { animation: bigpop 1.6s ease-out forwards; }
+@keyframes bigpop { 0% { opacity: 0; transform: translate(-50%,-50%) scale(.5); } 12% { opacity: 1; transform: translate(-50%,-50%) scale(1.12); } 22% { transform: translate(-50%,-50%) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%,-60%) scale(1); } }
+.hud-pop { position: absolute; transform: translate(-50%,-50%); font-weight: 900; font-size: 20px; color: #fff; text-shadow: 0 2px 3px rgba(0,0,0,.7); white-space: nowrap; }
+.hud-pop.good { color: #8cf09a; }
+.hud-pop.gold { color: #ffe066; font-size: 26px; }
+.hud-pop.bad { color: #ffb0a0; }
+.hud-pop.plus { color: #fff3c0; font-size: 18px; }
+.hud-trip { position: absolute; left: calc(90px + var(--safe-l)); top: calc(14px + var(--safe-t)); background: rgba(20,32,38,.62); border-radius: 12px; padding: 6px 12px; font-size: 14px; font-weight: 700; line-height: 1.45; }
+@media (pointer: fine) { .hud-trip { left: calc(14px + var(--safe-l)); } }
+.hud-trip b { color: var(--slicker); }
+.hud-portraits { position: absolute; right: calc(12px + var(--safe-r)); top: calc(12px + var(--safe-t)); display: flex; gap: 8px; }
+.hud-portrait { width: 64px; display: flex; flex-direction: column; align-items: center; pointer-events: auto; cursor: pointer; }
+.hud-portrait .face { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; font: 900 22px Georgia, serif; color: #23262b; border: 3px solid rgba(255,255,255,.75); box-shadow: 0 2px 6px rgba(0,0,0,.3); }
+.hud-portrait.sel .face { border-color: var(--slicker); box-shadow: 0 0 0 4px rgba(242,194,48,.5); }
+.hud-portrait .status { font-size: 15px; height: 18px; margin-top: -6px; }
+.hud-portrait .name { font-size: 12px; font-weight: 800; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
+.hud-ind { position: absolute; transform: translate(-50%,-50%); display: flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; background: rgba(20,32,38,.75); border: 2px solid #fff; font-size: 16px; white-space: nowrap; }
+.hud-ind b { font-size: 12px; }
+.hud-ind.edge::after { content: ''; position: absolute; left: 50%; top: 50%; width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 12px solid #fff; transform: translate(-50%,-50%) rotate(calc(var(--ang) + 90deg)) translateY(-26px); }
+.hud-level { position: absolute; left: 50%; bottom: calc(76px + var(--safe-b)); transform: translateX(-50%); width: 240px; height: 30px; border-radius: 15px; background: rgba(216,240,224,.85); border: 3px solid #4a5560; opacity: 0; transition: opacity .2s; }
+.hud-level.on { opacity: 1; }
+.hud-level-win { position: absolute; left: 50%; top: 2px; bottom: 2px; transform: translateX(-50%); background: rgba(88,196,106,.55); border-radius: 10px; }
+.hud-level.good .hud-level-win { background: rgba(88,196,106,.95); }
+.hud-level-bubble { position: absolute; top: 4px; width: 20px; height: 16px; border-radius: 50%; transform: translateX(-50%); background: #fff; box-shadow: inset 0 -2px 3px rgba(0,0,0,.2); transition: left .05s linear; }
+.hud-level-cap { position: absolute; left: 50%; top: -20px; transform: translateX(-50%); font-weight: 900; font-size: 12px; color: #fff; text-shadow: 0 1px 2px #000; }
+.hud-flash { position: absolute; inset: 0; opacity: 0; }
+.hud-flash.on { animation: flash .5s ease-out; }
+@keyframes flash { 0% { opacity: .45; } 100% { opacity: 0; } }

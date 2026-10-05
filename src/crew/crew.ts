@@ -6,12 +6,12 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { config, DEG } from '../config';
-import { clamp, damp, dampAngle, lerp, solveBallistic, wrapAngle } from '../core/math';
+import { clamp, damp, dampAngle, solveBallistic, throwFlightTime } from '../core/math';
 import { BodyState } from '../deck/deckWorld';
 import { CG } from '../deck/groups';
 import { ITEM_DEFS, ItemManager, type Item } from '../deck/items';
 import type { Interactable, Verb } from '../deck/interact';
-import { insideHouse, L } from '../boat/layout';
+import { insideHouse, L, hullHalfWidth } from '../boat/layout';
 import { makeInput, consumeEdges, type CrewInput } from './input';
 import type { CrewView, PartName } from '../art/crew';
 import { PART_NAMES, type Ragdoll, type RagdollPool } from './ragdoll';
@@ -488,7 +488,7 @@ export class Crew {
     const t = it.body.translation();
     const from = _v.set(t.x, t.y, t.z);
     const d = Math.hypot(target.x - from.x, target.z - from.z);
-    const T = clamp(0.38 + d * 0.06, 0.42, 1.35);
+    const T = throwFlightTime(from, target, ItemManager.outsideHull(target, 0));
     const vel = solveBallistic(from, target, T, this.ctx.dw.gLocal, _v2);
     const maxS = config.crew.throwMaxSpeed;
     if (vel.length() > maxS) vel.setLength(maxS);
@@ -811,6 +811,12 @@ export class Crew {
     }
     if (this.held) this.drop();
     this.unbrace();
+    // always land in the water outside the hull
+    if (!ItemManager.outsideHull(p, 0.6)) {
+      const side = p.x >= 0 ? 1 : -1;
+      p.x = side * (hullHalfWidth(Math.max(-9, Math.min(9, p.z))) + 1.0);
+      v.set(side * 1.5, 1.5, 0);
+    }
     this.ctx.boat.localToWorld(p, this.wp);
     this.ctx.boat.pointVelocity(p, this.wv);
     this.wv.add(v.applyQuaternion(this.ctx.boat.quat));
@@ -845,6 +851,17 @@ export class Crew {
     this.wv.z += ((_v.z + drift.y * ds - this.wv.z) * 1.2 + this.seaPull.z) * dt;
     this.wp.addScaledVector(this.wv, dt);
     this.seaPull.set(0, 0, 0);
+    // keep clear of the hull (no collider out here): nudge outward
+    if (this.state === 'sea') {
+      const lp = this.ctx.boat.worldToLocal(this.wp, _v2);
+      const z = Math.max(-9.4, Math.min(10.4, lp.z));
+      const hw = hullHalfWidth(z) + 0.75;
+      if (Math.abs(lp.x) < hw && lp.z > -10.2 && lp.z < 11) {
+        const side = lp.x >= 0 ? 1 : -1;
+        _v3.set(side, 0, 0).applyAxisAngle(UP, this.ctx.boat.yaw);
+        this.wp.addScaledVector(_v3, Math.min(hw - Math.abs(lp.x), 2 * dt));
+      }
+    }
     if (_v.lengthSq() > 0.01) this.facing = Math.atan2(_v.x, _v.z) - this.ctx.boat.yaw;
     this.walkPhase += dt * 4;
   }

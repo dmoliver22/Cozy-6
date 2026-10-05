@@ -42,9 +42,9 @@ export const config = {
     ],
     rogue: {
       maxAmp: 3.0,
-      length: 34, // wavelength of the carrier inside the group
-      groupWidth: 18, // gaussian envelope half-width along travel direction
-      speed: 13, // m/s — a game speed, not a dispersion speed, so the crest reads on the horizon
+      length: 40, // wavelength of the carrier inside the group
+      groupWidth: 20, // gaussian envelope half-width along travel direction
+      speed: 9.5, // m/s — a game speed, not a dispersion speed, so the crest reads on the horizon
       steep: 0.55,
       fadeInSec: 6, // amplitude ramps up as it approaches
     },
@@ -62,6 +62,8 @@ export const config = {
     freeboard: 1.3, // deck height above the waterline
     /** Critically damped spring frequencies (rad/s) — higher = snappier. */
     responsiveness: { heave: 2.4, pitch: 2.0, roll: 1.7 },
+    /** extra spring stiffness while a rogue set is under the boat (rides up the face instead of being swamped) */
+    rogueResponsiveness: { heave: 2.0, pitch: 1.0, roll: 0.8 },
     rollGain: 1.8,
     pitchGain: 0.75,
     maxRollDeg: 34,
@@ -98,9 +100,9 @@ export const config = {
     washSpeed: 7.5,
     washForce: 260, // N per (m/s) relative water speed per unit drag area
     washDepth: 0.55,
-    washLiftAtRail: 2.2, // upward m/s² nudge when a wash crosses the far rail (comedy overboards)
+    washLiftAtRail: 1.3, // upward m/s² nudge when a wash crosses the far rail (comedy overboards)
     vaultSpeed: 2.6, // a tumbling body hitting the low rail faster than this may go over
-    vaultChance: 0.4,
+    vaultChance: 0.22,
     unstickSec: 2.0,
   },
 

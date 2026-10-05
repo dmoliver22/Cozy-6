@@ -228,6 +228,9 @@ export function vocal(v: Voice, o: VocalOpts): void {
   const v0 = FORMANTS[o.vowels[0]?.[1] ?? 'a'];
   const f1 = v.filter('bandpass', v0[0] * fs, 5);
   const f2 = v.filter('bandpass', v0[1] * fs, 7);
+  // anchor at the blip start so the glides don't begin at schedule time
+  f1.frequency.setValueAtTime(v0[0] * fs, t);
+  f2.frequency.setValueAtTime(v0[1] * fs, t);
   for (const [frac, vw] of o.vowels.slice(1)) {
     const fm = FORMANTS[vw];
     f1.frequency.linearRampToValueAtTime(fm[0] * fs, t + frac * T);

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pot Luck — audio test bench</title>
+    <style>
+      :root { color-scheme: light dark; --bg: #f4efe6; --fg: #2b2622; --card: #fffaf2; --accent: #c8553d; --muted: #8a7f74; }
+      @media (prefers-color-scheme: dark) { :root { --bg: #1c1a18; --fg: #efe7dc; --card: #27241f; --muted: #a59a8d; } }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 16px; font: 14px/1.4 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+      h1 { font-size: 18px; margin: 0 0 4px; }
+      h2 { font-size: 14px; margin: 18px 0 8px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+      .note { color: var(--muted); margin: 0 0 12px; }
+      .grid { display: flex; flex-wrap: wrap; gap: 6px; }
+      button { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent); background: var(--card); color: var(--fg); cursor: pointer; }
+      button:active { transform: translateY(1px); }
+      button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+      .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 6px 0; }
+      label { display: inline-flex; align-items: center; gap: 6px; }
+      input[type=range] { width: 120px; }
+      input[type=text] { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent); background: var(--card); color: var(--fg); width: min(520px, 100%); }
+      .loop { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 6px 0; border-bottom: 1px dashed color-mix(in srgb, var(--fg) 12%, transparent); }
+      .loop b { width: 84px; }
+      #status { font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <h1>Pot Luck — procedural audio bench</h1>
+    <p class="note">Dev only (open via the Vite dev server: <code>/src/audio/audio-test.html</code>). Tap anywhere to unlock audio. Status: <span id="status">locked</span></p>
+
+    <h2>Mix</h2>
+    <div class="row">
+      <label>master <input id="master" type="range" min="0" max="1" step="0.01" value="1" /></label>
+      <label>sfx <input id="sfxv" type="range" min="0" max="1" step="0.01" value="1" /></label>
+      <label>music <input id="musicv" type="range" min="0" max="1" step="0.01" value="1" /></label>
+      <label><input id="mute" type="checkbox" /> mute</label>
+    </div>
+
+    <h2>One-shots</h2>
+    <div class="row">
+      <label>pitch <input id="pitch" type="range" min="0.5" max="2" step="0.01" value="1" /> <span id="pitchv">1.00</span></label>
+      <label>volume <input id="vol" type="range" min="0" max="1.5" step="0.01" value="1" /></label>
+      <label>pan <input id="pan" type="range" min="-1" max="1" step="0.01" value="0" /></label>
+      <button id="bellRise">bell doppler rise ×6</button>
+      <button id="clickStorm">20 clicks at once</button>
+    </div>
+    <div id="sfx" class="grid"></div>
+
+    <h2>Loops</h2>
+    <div id="loops"></div>
+
+    <h2>Babble</h2>
+    <div class="row">
+      <input id="line" type="text" value="Ahoy, deckhands! Pots are in — keep an eye on that swell, okay?" />
+    </div>
+    <div class="row">
+      <label>voice <input id="bpitch" type="range" min="0.5" max="2" step="0.01" value="1" /></label>
+      <label>speed <input id="bspeed" type="range" min="0.5" max="2.5" step="0.01" value="1" /></label>
+      <label><input id="bradio" type="checkbox" /> radio</label>
+      <button id="say">say it</button>
+      <span id="bdur"></span>
+    </div>
+
+    <h2>Music</h2>
+    <div class="row">
+      <button id="mstart">start</button>
+      <button id="mstop">stop</button>
+      <label>intensity <input id="inten" type="range" min="0" max="1" step="0.01" value="0" /> <span id="intenv">0.00</span></label>
+      <label>mood
+        <select id="mood"><option>sea</option><option>harbor</option><option>galley</option><option>title</option></select>
+      </label>
+    </div>
+
+    <script type="module">
+      import { sfx, music, SFX_NAMES, LOOP_NAMES } from './index.ts';
+
+      const $ = (id) => document.getElementById(id);
+      const status = $('status');
+      const unlock = () => {
+        sfx.unlock();
+        setTimeout(() => (status.textContent = sfx.ready ? 'running' : 'locked'), 50);
+      };
+      for (const ev of ['pointerdown', 'keydown', 'touchend']) window.addEventListener(ev, unlock, { passive: true });
+
+      $('master').oninput = (e) => sfx.setMaster(+e.target.value);
+      $('sfxv').oninput = (e) => sfx.setSfxVolume(+e.target.value);
+      $('musicv').oninput = (e) => sfx.setMusicVolume(+e.target.value);
+      $('mute').onchange = (e) => sfx.setMuted(e.target.checked);
+
+      const opts = () => ({ pitch: +$('pitch').value, volume: +$('vol').value, pan: +$('pan').value });
+      $('pitch').oninput = (e) => ($('pitchv').textContent = (+e.target.value).toFixed(2));
+      const grid = $('sfx');
+      for (const name of SFX_NAMES) {
+        const b = document.createElement('button');
+        b.textContent = name;
+        b.onclick = () => sfx.play(name, opts());
+        grid.appendChild(b);
+      }
+      $('bellRise').onclick = () => {
+        for (let i = 0; i < 6; i++) sfx.play('bell', { pitch: 1 + i * 0.06, delay: i * 0.55, volume: 0.5 + i * 0.1 });
+      };
+      $('clickStorm').onclick = () => { for (let i = 0; i < 20; i++) sfx.play('click', { pitch: 0.8 + Math.random() * 0.6 }); };
+
+      const loops = $('loops');
+      for (const name of LOOP_NAMES) {
+        const row = document.createElement('div');
+        row.className = 'loop';
+        row.innerHTML = `<b>${name}</b><button>off</button>
+          <label>vol <input type="range" min="0" max="1.5" step="0.01" value="1"></label>
+          <label>pitch <input type="range" min="0.3" max="2.5" step="0.01" value="1"> <span>1.00</span></label>`;
+        const [btn] = row.getElementsByTagName('button');
+        const [vol, pit] = row.getElementsByTagName('input');
+        const pv = row.getElementsByTagName('span')[0];
+        let h = null;
+        btn.onclick = () => {
+          if (h) { h.stop(0.8); h = null; btn.textContent = 'off'; btn.classList.remove('on'); }
+          else { h = sfx.loop(name, { volume: +vol.value, pitch: +pit.value }); btn.textContent = 'on'; btn.classList.add('on'); }
+        };
+        vol.oninput = () => h && h.setVolume(+vol.value, 0.1);
+        pit.oninput = () => { pv.textContent = (+pit.value).toFixed(2); h && h.setPitch(+pit.value, 0.3); };
+        loops.appendChild(row);
+      }
+
+      $('say').onclick = () => {
+        const d = sfx.babble($('line').value, { pitch: +$('bpitch').value, speed: +$('bspeed').value, radio: $('bradio').checked });
+        $('bdur').textContent = d.toFixed(2) + ' s';
+      };
+
+      $('mstart').onclick = () => music.start();
+      $('mstop').onclick = () => music.stop(1.5);
+      $('inten').oninput = (e) => { music.setIntensity(+e.target.value); $('intenv').textContent = (+e.target.value).toFixed(2); };
+      $('mood').onchange = (e) => music.setMood(e.target.value);
+    </script>
+  </body>
+</html>
