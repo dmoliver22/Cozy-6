@@ -26,4 +26,6 @@ export const CG = {
   hat: groups(G.HAT, G.STATIC | G.ITEM | G.POT | G.STACK),
   /** Query filter that only hits static structure + stacked pots (for ground / line-of-sight rays). */
   queryStatic: groups(0xffff, G.STATIC | G.STACK | G.POT),
+  /** Query filter for "what am I looking at" rays. */
+  queryAll: groups(0xffff, 0xffff & ~G.HELD),
 };

@@ -97,7 +97,7 @@ export function outlineOf(mesh: THREE.Mesh, color = 0x1d1f24, thickness = 0.035)
     shader.uniforms.uThick = { value: thickness };
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nuniform float uThick;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += normalize(objectNormal) * uThick;');
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += normalize(normal) * uThick;');
   };
   const o = new THREE.Mesh(mesh.geometry, mat);
   o.position.copy(mesh.position);

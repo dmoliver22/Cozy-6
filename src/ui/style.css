@@ -34,3 +34,23 @@ html, body {
 .loading-sub { margin-top: 8px; opacity: .8; font-size: 16px; }
 
 #debug { position: absolute; left: calc(8px + var(--safe-l)); bottom: calc(8px + var(--safe-b)); z-index: 40; background: rgba(10,20,25,.75); color: #bff; font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace; padding: 8px 10px; border-radius: 8px; white-space: pre; pointer-events: none; }
+
+.prompt { position: absolute; left: 50%; bottom: calc(22px + var(--safe-b)); transform: translateX(-50%); padding: 8px 16px; border-radius: 999px; background: rgba(20,32,38,.72); color: var(--foam); font-weight: 700; font-size: 16px; letter-spacing: .2px; white-space: nowrap; transition: opacity .15s; box-shadow: 0 3px 10px rgba(0,0,0,.25); }
+
+/* ---- touch overlay ---- */
+.touch-layer { position: absolute; inset: 0; pointer-events: none; }
+.t-stick-base { display: none; position: absolute; width: 124px; height: 124px; margin: -62px 0 0 -62px; border-radius: 50%; background: rgba(255,255,255,.12); border: 2px solid rgba(255,255,255,.35); }
+.t-stick-knob { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; border-radius: 50%; background: rgba(242,194,48,.85); box-shadow: 0 2px 8px rgba(0,0,0,.3); transform: translate(-50%,-50%); }
+.t-btn { position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 50%; color: #23262b; font-weight: 800; box-shadow: 0 4px 0 rgba(0,0,0,.25), 0 6px 14px rgba(0,0,0,.25); pointer-events: auto; touch-action: none; -webkit-tap-highlight-color: transparent; }
+.t-btn.down { transform: translateY(3px) scale(.96); box-shadow: 0 1px 0 rgba(0,0,0,.25); }
+.t-action { right: calc(26px + var(--safe-r)); bottom: calc(118px + var(--safe-b)); width: 96px; height: 96px; background: var(--slicker); }
+.t-action.dim { opacity: .55; }
+.t-action .t-icon { font-size: 36px; line-height: 1; }
+.t-action .t-label { position: absolute; bottom: -24px; right: 0; white-space: nowrap; font-size: 13px; color: var(--foam); text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+.t-brace { right: calc(132px + var(--safe-r)); bottom: calc(28px + var(--safe-b)); width: 96px; height: 96px; background: var(--buoy); color: #fff; }
+.t-brace .t-icon { font-size: 30px; line-height: 1; }
+.t-brace .t-label { font-size: 13px; margin-top: 2px; }
+.t-small { width: 64px; height: 64px; font-size: 26px; background: rgba(234,242,240,.9); }
+.t-view { right: calc(26px + var(--safe-r)); bottom: calc(26px + var(--safe-b)); }
+.t-menu { left: calc(14px + var(--safe-l)); top: calc(14px + var(--safe-t)); }
+.t-sling { display: none; position: absolute; height: 4px; background: repeating-linear-gradient(90deg, #fff 0 8px, transparent 8px 14px); transform-origin: 0 50%; pointer-events: none; }

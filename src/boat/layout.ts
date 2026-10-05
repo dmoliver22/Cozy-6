@@ -89,7 +89,7 @@ export const L = {
   // Spawn points
   spawn: {
     player: new THREE.Vector3(-1.4, 0, -1.6),
-    dot: new THREE.Vector3(0.9, 0, 0.0),
+    dot: new THREE.Vector3(1.6, 0, -0.4),
     ike: new THREE.Vector3(-2.0, 0, -3.0),
     mo: new THREE.Vector3(0, 0, 6.6),
     cat: new THREE.Vector3(1.6, 0, -3.2),

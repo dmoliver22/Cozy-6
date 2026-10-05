@@ -132,7 +132,7 @@ export const config = {
     eyeHeight: 1.6,
     hatRespawnSec: 9,
     pinchStaggerSec: 0.7,
-    pinchChance: 0.08, // per second when a crab is at your ankles
+    pinchChance: 0.45, // per second when a crab is at your ankles
   },
 
   brace: {
@@ -236,8 +236,8 @@ export const config = {
     overhead: {
       fov: 30,
       pitchDeg: 55,
-      distanceFar: 62, // whole boat
-      distanceNear: 22, // close on my deckhand
+      distanceFar: 46, // whole boat
+      distanceNear: 15, // close on my deckhand
       followLag: 2.2, // smoothing rate (1/s)
       yawLag: 1.6,
       landscapeYawDeg: 90, // broadside: bow points screen-right

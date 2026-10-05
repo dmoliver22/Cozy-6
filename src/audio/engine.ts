@@ -75,8 +75,8 @@ export function ahr(p: AudioParam, t: number, a: number, peak: number, h: number
 
 /** exponential sweep of a (positive) param */
 export function sweep(p: AudioParam, t: number, from: number, to: number, dur: number): void {
-  p.setValueAtTime(Math.max(from, 0.0001), t);
-  p.exponentialRampToValueAtTime(Math.max(to, 0.0001), t + Math.max(dur, 0.001));
+  p.setValueAtTime(clamp(from, 0.0001, 22000), t);
+  p.exponentialRampToValueAtTime(clamp(to, 0.0001, 22000), t + Math.max(dur, 0.001));
 }
 
 /** smoothly move a param toward `v` from now (cancels pending automation) */
@@ -366,7 +366,7 @@ export function unlockEngine(): void {
   } catch {
     /* noop */
   }
-  if (ctx.state === 'running') fireReady();
+  if ((ctx.state as AudioContextState) === 'running') fireReady();
 }
 
 /** Run `cb` once the context is running (immediately if it already is). Returns an unsubscribe fn. */
@@ -471,7 +471,7 @@ export class Voice {
     this.counted = o.counted ?? true;
     const ctx = this.ctx;
     this.out = this.track(ctx.createGain());
-    this.out.gain.value = clamp(o.volume ?? 1, 0, 4);
+    this.out.gain.value = clamp(o.volume ?? 1, 0, 8);
     let tail: AudioNode = this.out;
     const pan = o.pan ?? 0;
     if (pan && e.canPan) {

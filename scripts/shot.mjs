@@ -25,6 +25,6 @@ if (evalJs) {
   try { result = await page.evaluate(evalJs); } catch (e) { result = 'EVAL ERROR: ' + e.message; }
 }
 await page.screenshot({ path: out });
-console.log(logs.slice(-40).join('\n'));
+console.log(logs.filter(l=>!l.includes("useProgram")).slice(-40).join('\n'));
 if (result !== null) console.log('RESULT:', typeof result === 'string' ? result : JSON.stringify(result, null, 1));
 await browser.close();

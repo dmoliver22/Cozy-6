@@ -5,7 +5,7 @@
  * caller has already multiplied by the pitch param where appropriate.
  */
 import type { NoiseKind, Voice } from './engine';
-import { ahr, env, rnd, sweep, wire } from './engine';
+import { ahr, env, rnd, softClipCurve, sweep, wire } from './engine';
 
 export interface ToneOpts {
   type?: OscillatorType;
@@ -303,7 +303,17 @@ export function creak(
   ahr(eg.gain, t, a, o.peak, Math.max(0, o.dur - a - r), r);
 }
 
-/** low-frequency thump (impacts) */
+/**
+ * low-frequency thump (impacts). The sine is gently saturated *before* the
+ * envelope so it carries a few upper harmonics — keeps the weight audible on
+ * phone speakers that can't reproduce the fundamental.
+ */
 export function thump(v: Voice, at: number, f: number, f2: number, d: number, peak: number, dest?: AudioNode): void {
-  tone(v, { f, f2, glide: d * 0.6, at, a: 0.003, d, peak, dest });
+  const t = v.t + at;
+  const g = v.gain(0);
+  const end = env(g.gain, t, 0.003, peak, d);
+  const osc = v.osc('sine', f, t, end + 0.01);
+  sweep(osc.frequency, t, f, f2, d * 0.6);
+  const sh = v.shaper(softClipCurve(f < 160 ? 2.2 : 1.3));
+  wire(osc, sh, g, dest ?? v.out);
 }
