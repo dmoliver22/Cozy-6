@@ -134,7 +134,7 @@ export const config = {
     eyeHeight: 1.6,
     hatRespawnSec: 9,
     pinchStaggerSec: 0.7,
-    pinchChance: 0.45, // per second when a crab is at your ankles
+    pinchChance: 0.18, // per second when a crab is at your ankles
   },
 
   brace: {
@@ -190,7 +190,7 @@ export const config = {
     potsPerString: 5,
     potMass: 300,
     potSize: [2, 0.9, 2] as [number, number, number],
-    potSpacing: 26,
+    potSpacing: 15,
     soakFillPerMin: 3.4, // crab per minute in an average spot
     maxCatchBodies: 10,
     haulSpeed: 1.25, // m/s line speed

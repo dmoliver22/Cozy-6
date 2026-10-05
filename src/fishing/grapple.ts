@@ -29,8 +29,9 @@ export class GrappleSystem {
   private line: THREE.Line;
   private linePos = new Float32Array(N * 3);
   readonly home = L.grappleHook.clone();
-  readonly homeQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.2);
+  readonly homeQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.15);
   lastResult: 'hit' | 'miss' | null = null;
+  lastThrowAt = -10;
 
   constructor(private ctx: Ctx) {
     ctx.sys.grapple = this;
@@ -51,6 +52,7 @@ export class GrappleSystem {
   onThrow(crew: Crew, it: Item): void {
     if (it !== this.grapple) return;
     this.thrower = crew;
+    this.lastThrowAt = this.ctx.time;
     this.hooked = null;
     this.reel = 0;
     this.lastResult = null;

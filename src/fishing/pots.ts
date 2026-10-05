@@ -124,6 +124,8 @@ export class PotSystem {
   /** trip control */
   settingString = 0; // which string new pots belong to
   settingAllowed = true;
+  /** the trip wants the next pot over the side (spacing along the string) */
+  launchWanted = false;
   autoCrane = true;
   private catchRng: Rng;
   private spotRng: Rng;

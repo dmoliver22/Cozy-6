@@ -69,8 +69,8 @@ export const L = {
   table: { center: new THREE.Vector3(-0.05, 0.9, 1.0), half: new THREE.Vector3(0.95, 0.05, 1.1) },
   tableSpot: new THREE.Vector3(0.3, 0, -0.55),
   hatch: { center: new THREE.Vector3(0.7, 0, -2.0), half: 0.55, coaming: 0.26 },
-  crate: { center: new THREE.Vector3(1.95, 0, 2.45), half: new THREE.Vector3(0.45, 0.32, 0.35) },
-  baitBox: { center: new THREE.Vector3(-2.45, 0, -1.5), half: new THREE.Vector3(0.42, 0.3, 0.32) },
+  crate: { center: new THREE.Vector3(2.45, 0, 1.85), half: new THREE.Vector3(0.38, 0.32, 0.3) },
+  baitBox: { center: new THREE.Vector3(-2.45, 0, -2.55), half: new THREE.Vector3(0.42, 0.3, 0.32) },
   buoyPile: new THREE.Vector3(2.45, 0, 0.3),
   engineHatch: { center: new THREE.Vector3(1.75, 0.06, -3.55), half: 0.45 },
   coilSpot: new THREE.Vector3(2.3, 0, -4.0),
@@ -78,21 +78,22 @@ export const L = {
   stackCols: [-1.95, 0, 1.95],
   stackTierY: [0.45, 1.36],
   // Tool wall on the house aft face
-  ringHook: new THREE.Vector3(-1.3, 1.45, HOUSE.z0 - 0.12),
+  ringHook: new THREE.Vector3(-1.05, 1.45, HOUSE.z0 - 0.12),
   malletHook: new THREE.Vector3(1.3, 1.15, HOUSE.z0 - 0.1),
-  grappleHook: new THREE.Vector3(-1.98, 1.25, 3.9),
+  grappleHook: new THREE.Vector3(-1.62, 1.25, HOUSE.z0 - 0.1),
   // Inside the house
   wheel: new THREE.Vector3(0, 1.15, 7.15),
   helmSpot: new THREE.Vector3(0, 0, 6.6),
   stove: { center: new THREE.Vector3(1.4, 0, 3.75), half: new THREE.Vector3(0.38, 0.45, 0.32) },
   galleyTable: { center: new THREE.Vector3(-1.25, 0, 4.9), half: new THREE.Vector3(0.45, 0.38, 0.7) },
   hatHook: new THREE.Vector3(-1.75, 1.75, 3.45),
-  mast: new THREE.Vector3(1.25, 0, 2.75),
+  /** the mast stands on the wheelhouse roof (keeps the deck walkable) */
+  mast: new THREE.Vector3(1.2, HOUSE.roofY, 4.1),
   // Spawn points
   spawn: {
-    player: new THREE.Vector3(-1.4, 0, -1.6),
+    player: new THREE.Vector3(-1.5, 0, -1.4),
     dot: new THREE.Vector3(1.6, 0, -0.4),
-    ike: new THREE.Vector3(-2.0, 0, -3.0),
+    ike: new THREE.Vector3(-1.5, 0, -3.5),
     mo: new THREE.Vector3(0, 0, 6.6),
     cat: new THREE.Vector3(1.6, 0, -3.2),
   },

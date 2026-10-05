@@ -166,10 +166,16 @@ export class Boat {
     }
     this.vel.subVectors(this.pos, this.prevPos).divideScalar(dt);
     const rawAcc = _v.subVectors(this.vel, this.lastVel).divideScalar(dt);
-    // light smoothing keeps finite-difference spikes out of local gravity
-    this.acc.lerp(rawAcc, 0.5);
-    const amax = 14;
-    if (this.acc.lengthSq() > amax * amax) this.acc.setLength(amax);
+    // smoothing keeps finite-difference spikes out of local gravity
+    this.acc.lerp(rawAcc, 0.3);
+    // steering/maneuvering accelerations are gentle on a real boat; waves (vertical) can be big
+    const ah = Math.hypot(this.acc.x, this.acc.z);
+    const hmax = 3.5;
+    if (ah > hmax) {
+      this.acc.x *= hmax / ah;
+      this.acc.z *= hmax / ah;
+    }
+    this.acc.y = clamp(this.acc.y, -9, 9);
     this.lastVel.copy(this.vel);
 
     this.angVel.set(this.pitch.v, this.yawRate, this.roll.v);

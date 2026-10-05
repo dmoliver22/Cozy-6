@@ -311,16 +311,17 @@ export function makeBoat(): BoatArt {
   root.add(stoveGlow);
 
   // --- mast, crane boom and hook (used for the comedic crane rescue)
-  const mast = cyl(0.12, 0.15, 6.2, toon(P.cream));
-  mast.position.set(L.mast.x, 3.1, L.mast.z);
+  const mastH = 4.2;
+  const mast = cyl(0.12, 0.15, mastH, toon(P.cream));
+  mast.position.set(L.mast.x, L.mast.y + mastH / 2, L.mast.z);
   root.add(mast);
   const bell = cyl(0.12, 0.18, 0.22, toon(0xc9a24a));
-  bell.position.set(L.mast.x + 0.25, 2.9, L.mast.z);
+  bell.position.set(L.mast.x + 0.25, L.mast.y + 0.9, L.mast.z);
   root.add(bell);
-  const lightTop = box(0.18, 0.18, 0.18, toonUnique(0xfff1c0, { emissive: 0xffd27a }), L.mast.x, 6.25, L.mast.z);
+  const lightTop = box(0.18, 0.18, 0.18, toonUnique(0xfff1c0, { emissive: 0xffd27a }), L.mast.x, L.mast.y + mastH + 0.05, L.mast.z);
   root.add(lightTop);
   const craneBoom = new THREE.Group();
-  craneBoom.position.set(L.mast.x, 3.6, L.mast.z);
+  craneBoom.position.set(L.mast.x, L.mast.y + 1.5, L.mast.z);
   const boom = box(0.16, 0.16, 5.2, toon(P.slicker), 0, 0, -2.5);
   craneBoom.add(boom);
   const craneHook = new THREE.Group();

@@ -70,6 +70,10 @@ export class CrabSystem {
     ctx.sys.crabs = this;
   }
 
+  get capacity(): number {
+    return Math.round(config.fishing.tankCapacity * (this.ctx.upgrades.has('biggerTank') ? config.fishing.biggerTankScale : 1));
+  }
+
   get items(): ItemManager {
     return this.ctx.items;
   }
@@ -168,9 +172,10 @@ export class CrabSystem {
       for (const c of crewList) {
         if (!c.isUp || c.stagger > 0) continue;
         const f = c.feet(_v2);
-        if (Math.abs(f.x - p.x) < 0.42 && Math.abs(f.z - p.z) < 0.42 && p.y < 0.4) {
+        if (Math.abs(f.x - p.x) < 0.42 && Math.abs(f.z - p.z) < 0.42 && p.y < 0.4 && t - (c.data.lastPinch ?? -10) > 8) {
           if (this.rng.chance(config.crew.pinchChance * dt)) {
             c.stagger = config.crew.pinchStaggerSec;
+            c.data.lastPinch = t;
             sfx.play('pinch', { volume: 0.8 });
             sfx.play('ow', { pitch: c.voicePitch, volume: 0.8, delay: 0.05 });
             events.emit('pinch', { crew: c.id });

@@ -127,7 +127,6 @@ export function buildDeckStructure(dw: DeckWorld): DeckStructure {
   boxAt(eh.half, 0.06, eh.half, eh.center.x, 0.06, eh.center.z, 'engineHatch', undefined, 0.6);
   // davit post, mast, lever bases
   mk(RAPIER.ColliderDesc.cylinder(L.davitTop.y / 2, 0.15).setTranslation(L.davitBase.x, L.davitTop.y / 2, L.davitBase.z), 'davit');
-  mk(RAPIER.ColliderDesc.cylinder(3.1, 0.15).setTranslation(L.mast.x, 3.1, L.mast.z), 'mast');
   boxAt(0.15, 0.18, 0.15, L.launcherLever.x, 0.18, L.launcherLever.z, 'leverBase');
   boxAt(0.25, 0.35, 0.3, L.davitBase.x + 0.3, 0.35, L.davitBase.z - 0.25, 'hauler');
 

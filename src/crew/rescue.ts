@@ -105,6 +105,7 @@ export class RescueSystem {
     this.holder = crew;
     this.swimmer = null;
     this.loseRopeAt = -1;
+    it.data.thrownAt = this.ctx.time;
   }
 
   private onRingLanded(): void {
@@ -255,7 +256,7 @@ export class RescueSystem {
     if (job.phase === 'swing') {
       const k = easeInOut(clamp(job.t / 1.2, 0, 1));
       boom.rotation.y = lerp(job.boomYaw0, want, k);
-      boom.rotation.x = lerp(-0.35, -0.12, k);
+      boom.rotation.x = lerp(-0.35, -0.05, k);
       art.craneHook.position.y = -0.8;
       this.reelTowardHook(s, dt, 1.4);
       if (job.t > 1.2) {

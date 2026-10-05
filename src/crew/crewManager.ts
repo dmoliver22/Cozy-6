@@ -67,7 +67,8 @@ export class CrewManager {
         const ob = other.parent();
         if (!ob || ob.isFixed() || ob.isKinematic()) continue; // structure never knocks you down by contact
         const crew = a.crew as Crew;
-        // ignore the thing you're carrying and light stuff
+        // only heavy loose things (a sliding pot) or a tumbling body knock you over — not light items or a crewmate's shoulder
+        if (b.kind === 'crew') continue;
         if (b.kind === 'item' && (b.item as { mass: number }).mass < 25) continue;
         const impulse = e.totalForceMagnitude() * dt;
         if (impulse > crew.pendingImpulse) {

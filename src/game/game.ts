@@ -17,7 +17,7 @@ import { DeckSurface } from '../deck/surface';
 import { ItemManager, ITEM_DEFS } from '../deck/items';
 import { Interactions } from '../deck/interact';
 import { registerItemInteractables } from '../deck/itemInteract';
-import { braceSegments, L } from '../boat/layout';
+import { braceSegments, L, insideHouse } from '../boat/layout';
 import { CrewManager } from '../crew/crewManager';
 import { PlayerController } from '../input/player';
 import { CrabSystem } from '../fishing/crabs';
@@ -37,6 +37,7 @@ import { Navigator } from '../boat/navigator';
 import { schedule } from '../core/schedule';
 import type { Ctx } from './ctx';
 import type { Crew } from '../crew/crew';
+import type { CrewManager as CrewManagerT } from '../crew/crewManager';
 import type { Item } from '../deck/items';
 import { clamp } from '../core/math';
 import { sfx, music } from '../audio';
@@ -46,6 +47,12 @@ import { PauseMenu } from '../ui/menu';
 import { FpHands } from '../ui/fpHands';
 import { haptics } from '../core/haptics';
 import type { Quality } from './stage';
+import { BotSystem } from '../crew/bots';
+import { Helm } from '../crew/helm';
+import { Cat } from '../crew/cat';
+import { Trip } from './trip';
+import { makeBuoy } from '../art/items';
+import type { CrewId } from '../crew/crew';
 
 const _p = new THREE.Vector3();
 const _m = new THREE.Matrix4();
@@ -79,6 +86,12 @@ export class Game {
   readonly grapple: GrappleSystem;
   readonly specials: SpecialSystem;
   readonly nav: Navigator;
+  readonly bots: BotSystem;
+  readonly helm: Helm;
+  readonly cat: Cat;
+  readonly trip: Trip;
+  private pingWho: CrewId | null = null;
+  private cutaway = 1;
   renderTime = 0;
   readonly boatRenderPos = new THREE.Vector3();
   readonly boatRenderQuat = new THREE.Quaternion();
@@ -164,6 +177,19 @@ export class Game {
 
     // loose things on deck
     for (const p of L.buckets) items.add(ITEM_DEFS.bucket, makeBucket(), p.clone().setY(0.2));
+    // the pile of spare buoys against the port rail (Ike's landing pad)
+    for (let i = 0; i < 8; i++) {
+      const bp = L.buoyPile.clone().add(new THREE.Vector3((i % 2) * -0.5, 0.3 + Math.floor(i / 4) * 0.45, -0.9 + (i % 4) * 0.55));
+      items.add(ITEM_DEFS.buoy, makeBuoy(), bp);
+    }
+    this.helm = new Helm(this.ctx);
+    this.bots = new BotSystem(this.ctx);
+    this.cat = new Cat(this.ctx);
+    this.ctx.sys.ping = (p: THREE.Vector3 | null) => this.doPing(p, null);
+    // Mo starts at the wheel
+    const mo = this.crew.get('mo');
+    mo.atHelm = true;
+    this.helm.holder = mo;
 
     // --- input & UI
     this.hud = new Hud(this.ui);
@@ -203,7 +229,7 @@ export class Game {
     });
     this.feedback = new Feedback(this.ctx, this.hud, this.rig, this.crew, this.loop);
 
-    this.boat.targetSpeed = config.boat.speed.set;
+    this.trip = new Trip(this.ctx, this.ui);
 
     // audio unlock on any gesture
     const unlock = () => sfx.unlock();
@@ -218,6 +244,22 @@ export class Game {
 
     this.setupDebugKeys();
     this.applySettings(this.settings);
+    // portraits: tap one, then tap a spot to send that bot
+    this.hud.onPortraitTap = (id) => {
+      this.pingWho = this.pingWho === id ? null : (id as CrewId);
+      this.hud.selectPortrait(this.pingWho);
+      if (this.pingWho) this.hud.toast(`Tap a spot or a job for ${this.crew.get(this.pingWho).name}`, '#f2c230', 2);
+    };
+    this.stage.renderer.domElement.addEventListener('pointerdown', (e) => {
+      if (!this.pingWho) return;
+      const nd = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+      const rc = new THREE.Raycaster();
+      rc.setFromCamera(nd, this.stage.camera);
+      const lp = new THREE.Vector3();
+      if (this.player.pointerToLocal(rc.ray, lp)) this.doPing(lp, this.pingWho, e.clientX, e.clientY);
+      this.pingWho = null;
+      this.hud.selectPortrait(null);
+    });
     if (this.stage.isPhone) this.rig.zoom = 0.5;
   }
 
@@ -280,7 +322,11 @@ export class Game {
     this.rogue.step(dt);
     this.nav.step(dt);
     this.boat.step(dt, this.sea);
+    this.trip.step(dt);
+    this.helm.step();
+    this.bots.step(dt);
     this.crew.step(dt);
+    this.cat.step(dt);
     this.rescue.step(dt);
     this.grapple.step(dt);
     this.pots.step(dt);
@@ -314,6 +360,8 @@ export class Game {
     this.ctx.items.render(alpha, this.boatRenderPos, this.boatRenderQuat);
     this.crabs.render();
     this.crew.render(alpha, dtReal, this.boatRenderPos, this.boatRenderQuat);
+    this.cat.render(dtReal);
+    this.updateCutaway(dtReal);
     this.rescue.render(this.boatRenderPos, this.boatRenderQuat);
     this.pots.render(alpha, this.boatRenderPos, this.boatRenderQuat);
     this.grapple.render();
@@ -369,12 +417,27 @@ export class Game {
     const inds = this.crew.overboard().map((c) => ({ world: c.wp.clone().setY(c.wp.y + 1.2), icon: '🛟', color: '#e8742b', label: c.id === 'player' ? 'You' : c.name }));
     for (const pot of this.pots.soakingPots()) {
       const b = pot.buoy!;
-      if (b.mode === 'sea' && b.visible) inds.push({ world: b.wp.clone().setY(b.wp.y + 2.2), icon: '🟠', color: '#f2c230', label: String(pot.number) });
+      const isTarget = this.trip.haulTarget() === pot;
+      if (b.mode === 'sea' && b.visible && (isTarget || this.trip.phase.startsWith('haul') || this.trip.phase.startsWith('transit1'))) inds.push({ world: b.wp.clone().setY(b.wp.y + 2.2), icon: isTarget ? '🎯' : '🟠', color: isTarget ? '#58c46a' : 'rgba(242,194,48,.6)', label: String(pot.number) });
     }
     const hang = this.pots.hangingPot;
     this.hud.setLevel(!!hang, this.pots.deckLevelDeg(), config.fishing.levelWindowDeg);
     this.hud.setIndicators(inds, this.stage.camera);
     this.hud.update(dtReal, this.stage.camera, this.boatGroup.matrixWorld);
+    const statusIcon = (c: ReturnType<CrewManagerT['get']>) => {
+      if (c.inSea) return '🛟';
+      if (c.state === 'down') return '💫';
+      if (c.braced) return '🤲';
+      if (c.atHelm) return '☸️';
+      const t = this.bots.brainOf(c)?.status ?? '';
+      return ({ brace: '🤲', rescue: '🛟', ping: '📍', 'clip line': '🪝', tip: '🦀', launch: '🚀', haul: '⚙️', 'land pot': '🧺', rehook: '🪝', grapple: '🪝', bait: '🫙', sort: '🦀', 'get hat': '🧢', 'chip ice': '🔨', 'cat inside': '🐈', 'coil line': '🪢', idle: '☕', helm: '☸️' } as Record<string, string>)[t] ?? '';
+    };
+    this.hud.setPortraits(
+      (['mo', 'dot', 'ike'] as CrewId[]).map((id) => {
+        const c = this.crew.get(id);
+        return { id, name: c.name, color: id === 'mo' ? '#d9c27a' : id === 'dot' ? '#7fc8c0' : '#9fd17a', status: statusIcon(c) };
+      }),
+    );
     this.updateAudio();
 
     this.stage.render();
@@ -432,6 +495,44 @@ export class Game {
         holding: !!p.held,
       });
     }
+  }
+
+  /** Dollhouse: the wheelhouse roof and upper walls fade when crew (other than Mo at the wheel) are inside. */
+  private updateCutaway(dt: number): void {
+    const v = new THREE.Vector3();
+    const someoneInside = this.crew.list.some((c) => !c.atHelm && !c.inSea && insideHouse(c.pos(v))) || insideHouse(this.cat.item.localPos(v));
+    const want = someoneInside && this.rig.blend < 0.5 ? 0.12 : 1;
+    this.cutaway += (want - this.cutaway) * Math.min(1, dt * 6);
+    const o = this.cutaway;
+    for (const m of this.boatArt.cutawayMats) {
+      m.opacity = o;
+      m.depthWrite = o > 0.95;
+    }
+    for (const mesh of this.boatArt.cutaway) {
+      const mat = mesh.material as THREE.Material;
+      if (!this.boatArt.cutawayMats.includes(mat as THREE.MeshToonMaterial)) mesh.visible = o > 0.6;
+      mesh.castShadow = o > 0.95;
+    }
+  }
+
+  private doPing(p: THREE.Vector3 | null, who: CrewId | null, sx?: number, sy?: number): void {
+    const player = this.crew.player;
+    const at = p ?? player.pos(new THREE.Vector3()).add(player.forward(new THREE.Vector3()).multiplyScalar(2));
+    const b = this.bots.ping(at, who ?? undefined);
+    if (!b) return;
+    sfx.play('uiTap', { volume: 0.6 });
+    // a little ring where you pointed
+    const m = document.createElement('div');
+    m.className = 'ping-mark';
+    if (sx === undefined) {
+      const v = at.clone().applyMatrix4(this.boatGroup.matrixWorld).project(this.stage.camera);
+      sx = (v.x * 0.5 + 0.5) * window.innerWidth;
+      sy = (-v.y * 0.5 + 0.5) * window.innerHeight;
+    }
+    m.style.left = sx + 'px';
+    m.style.top = sy + 'px';
+    this.ui.appendChild(m);
+    setTimeout(() => m.remove(), 1300);
   }
 
   /** Debug / test hooks (also used by the headless probes). */

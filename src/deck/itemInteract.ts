@@ -44,6 +44,7 @@ export function registerItemInteractables(items: { onAdd?: (it: Item) => void; o
       },
     };
     map.set(it.id, ia);
+    it.data.iaId = ia.id;
     interact.add(ia);
   };
   items.onRemove = (it: Item) => {

@@ -2,6 +2,7 @@ import './ui/style.css';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { applyUrlOverrides } from './config';
 import { Game } from './game/game';
+import { events } from './core/events';
 
 async function boot() {
   const params = applyUrlOverrides();
@@ -10,6 +11,8 @@ async function boot() {
   const game = new Game(app);
   (window as unknown as { __game: Game; __params: unknown }).__game = game;
   (window as unknown as { __params: unknown }).__params = params;
+  (window as unknown as { __events: unknown }).__events = events;
+  game.trip.start(params.skipTutorial === '1');
   game.start();
   document.getElementById('loading')?.classList.add('hidden');
 }

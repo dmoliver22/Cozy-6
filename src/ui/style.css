@@ -95,7 +95,7 @@ html, body {
 .hud-portrait.sel .face { border-color: var(--slicker); box-shadow: 0 0 0 4px rgba(242,194,48,.5); }
 .hud-portrait .status { font-size: 15px; height: 18px; margin-top: -6px; }
 .hud-portrait .name { font-size: 12px; font-weight: 800; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
-.hud-ind { position: absolute; transform: translate(-50%,-50%); display: flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; background: rgba(20,32,38,.75); border: 2px solid #fff; font-size: 16px; white-space: nowrap; }
+.hud-ind { position: absolute; transform: translate(-50%,-50%); display: flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 999px; background: rgba(20,32,38,.6); border: 2px solid #fff; font-size: 13px; white-space: nowrap; }
 .hud-ind b { font-size: 12px; }
 .hud-ind.edge::after { content: ''; position: absolute; left: 50%; top: 50%; width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 12px solid #fff; transform: translate(-50%,-50%) rotate(calc(var(--ang) + 90deg)) translateY(-26px); }
 .hud-level { position: absolute; left: 50%; bottom: calc(76px + var(--safe-b)); transform: translateX(-50%); width: 240px; height: 30px; border-radius: 15px; background: rgba(216,240,224,.85); border: 3px solid #4a5560; opacity: 0; transition: opacity .2s; }
@@ -129,3 +129,15 @@ html, body {
 .reticle.hot { width: 18px; height: 18px; margin: -9px 0 0 -9px; border-color: var(--slicker); }
 .rotate-hint { position: absolute; left: 50%; top: 40%; transform: translate(-50%,-50%); background: rgba(20,32,38,.85); padding: 14px 20px; border-radius: 16px; font-weight: 800; text-align: center; display: none; }
 .rotate-hint.on { display: block; }
+
+.objective { position: absolute; left: 50%; top: calc(10px + var(--safe-t)); transform: translateX(-50%); background: rgba(246,239,224,.92); color: var(--ink); font-weight: 800; font-size: 15px; padding: 7px 14px; border-radius: 12px; box-shadow: 0 3px 10px rgba(0,0,0,.25); white-space: nowrap; max-width: 70vw; overflow: hidden; text-overflow: ellipsis; display: none; }
+.hud-wave.on ~ .objective { display: none !important; }
+.decision { position: absolute; inset: 0; display: none; place-items: center; background: rgba(12,26,30,.35); z-index: 25; pointer-events: auto; }
+.decision.on { display: grid; }
+.decision-card { width: min(460px, 92vw); background: var(--amber); color: #2a1b0e; border-radius: 18px; padding: 16px 18px; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+.decision-who { font-weight: 900; opacity: .75; }
+.decision-text { font-size: 19px; font-weight: 800; margin: 6px 0 12px; }
+.decision-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+.decision-buttons .btn { flex: 1; }
+.ping-mark { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border: 3px solid var(--slicker); border-radius: 50%; pointer-events: none; animation: pingfade 1.2s ease-out forwards; }
+@keyframes pingfade { from { transform: scale(.4); opacity: 1; } to { transform: scale(1.8); opacity: 0; } }

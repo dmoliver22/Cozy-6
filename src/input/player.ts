@@ -171,6 +171,7 @@ export class PlayerController {
       inp.move.set(wx * cy - wz * sy, wx * sy + wz * cy);
     }
     if (inp.move.lengthSq() > 1) inp.move.normalize();
+    inp.steer.set(mx, my);
 
     // --- aim
     this.aimValid = false;

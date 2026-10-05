@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import type { Item, ItemDef } from '../deck/items';
 import { makeSpecial, type SpecialKind } from '../art/items';
-import { L } from '../boat/layout';
+import { L, hullHalfWidth } from '../boat/layout';
 import type { Ctx } from '../game/ctx';
 import type { Crew, CrewId } from '../crew/crew';
 import type { Verb } from '../deck/interact';
@@ -105,7 +105,6 @@ export class SpecialSystem {
     sfx.play('purr', { volume: 0.5, pitch: 1.4 });
     this.ctx.sys.hud?.pop('♥', it.localPos(_v).clone().setY(_v.y + 0.5), 'good', 1.2);
     if (it.data.petted === 1) {
-      events.emit('catPet', {});
       // after a good pat, it says thanks and hops home: the big cozy moment
       it.data.leaveAt = this.ctx.time + 2.2;
     }
@@ -165,10 +164,14 @@ export class SpecialSystem {
       }
       if (kind === 'octopus') this.stepOctopus(it, p, dt);
       if (kind === 'otter' && it.data.leaveAt && t > it.data.leaveAt && !it.heldBy) {
-        // hop over the nearest rail
-        it.data.leaveAt = 0;
-        const side = p.x >= 0 ? 1 : -1;
-        it.body.setLinvel({ x: side * 4.2, y: 5.2, z: 0 }, true);
+        // a happy hop home: a lobbed arc that clears the port rail (the clear side), retried if it falls short
+        it.data.leaveAt = t + 3;
+        const z = Math.max(-3.8, Math.min(2.0, p.z));
+        const target = new THREE.Vector3(hullHalfWidth(z) + 1.8, -1.0, z);
+        const T = 1.45;
+        const g = this.ctx.dw.gLocal;
+        const v = target.sub(p).addScaledVector(g, -0.5 * T * T).divideScalar(T);
+        it.body.setLinvel({ x: v.x, y: v.y, z: v.z }, true);
         sfx.play('otter', { pitch: 1.3 });
       }
       if (kind === 'jelly') {

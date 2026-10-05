@@ -25,6 +25,8 @@ export interface CrewInput {
   targetId: number | null;
   /** run modifier (unused for now — toy crew only walk) */
   sprint: boolean;
+  /** raw stick / WASD (x = right, y = up) — used at the wheel for throttle & rudder */
+  steer: THREE.Vector2;
 }
 
 export function makeInput(): CrewInput {
@@ -43,6 +45,7 @@ export function makeInput(): CrewInput {
     brace: false,
     targetId: null,
     sprint: false,
+    steer: new THREE.Vector2(),
   };
 }
 

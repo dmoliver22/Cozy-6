@@ -156,11 +156,16 @@ export class Navigator {
         // speed profile: ease up to cruise, ease down into the pose
         const remain = pth.length - pth.s;
         const vmax = Math.min(config.boat.speed.cruise * 0.8, 0.6 + pth.length * 0.08);
-        pth.v = Math.min(vmax, pth.v + 0.5 * dt, Math.sqrt(Math.max(0, 2 * 0.35 * remain)) + 0.15);
+        pth.v = Math.min(vmax, pth.v + 0.5 * dt, Math.sqrt(Math.max(0, 2 * 0.35 * remain)) + 0.03);
+        // slow down through tight curls of the path
+        const ahead = this.sample(pth, Math.min(pth.length, pth.s + 1.5));
+        const here = this.sample(pth, pth.s);
+        const turnRate = Math.abs(wrapAngle(ahead.yaw - here.yaw)) / 1.5; // rad per metre
+        if (turnRate > 0.05) pth.v = Math.min(pth.v, Math.max(0.35, Math.sqrt(1.2 / turnRate) * 0.5));
         pth.s = Math.min(pth.length, pth.s + pth.v * dt);
         const pose = this.sample(pth, pth.s);
         b.pathPose = { x: pose.x, z: pose.z, yaw: pose.yaw, speed: remain > 0.05 ? pth.v : 0 };
-        if (remain <= 0.05) {
+        if (remain <= 0.004) {
           // hold station at the pose; finish swinging the bow round with the thruster
           b.pathPose = { x: pth.p3.x, z: pth.p3.z, yaw: pth.h3, speed: 0 };
           const done = Math.abs(wrapAngle(pth.h3 - b.yaw)) < 0.06;

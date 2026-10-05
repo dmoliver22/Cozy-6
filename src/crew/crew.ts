@@ -98,6 +98,8 @@ export class Crew {
   speedScale = 1;
   bot = false;
   lastHeldTime = 0;
+  /** free-form per-crew data (pinch cooldowns, …) */
+  readonly data: Record<string, number> = {};
   /** If set, the crew is attached to the wheel. */
   atHelm = false;
 
