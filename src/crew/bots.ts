@@ -299,7 +299,7 @@ export class BotBrain {
     if (cat && cat.wantsInside?.() && !this.board.holder('cat') && c.id === 'dot') return new CatTask();
     // 6/8. coil / idle
     if (this.task) return null;
-    return this.rng.chance(0.35) ? new CoilTask() : new IdleTask();
+    return this.rng.chance(0.35) && this.free('coil') ? new CoilTask() : new IdleTask();
   }
 
   // ------------------------------------------------------------------ planners
@@ -318,33 +318,39 @@ export class BotBrain {
     if (c.held && c.held.kind === 'lineEnd') return new ClipTask();
     // somebody dropped the buoy line: pick it up
     const looseLine = this.ctx.items.items.find((it) => it.kind === 'lineEnd' && it.mode === 'deck' && !it.heldBy);
-    if (looseLine && !pots.blockPot) return claimed(new FetchTask(looseLine), 'line');
+    if (looseLine && !pots.blockPot && this.free('line')) return claimed(new FetchTask(looseLine), 'line');
     const cp = pots.cradlePot;
     // tip a full pot
-    if (cp && cp.state === 'cradle' && cp.catch && pots.cradleMode === 'idle' && !this.playerDoing('tip')) return claimed(new LeverTask('tip'), 'lever');
+    if (cp && cp.state === 'cradle' && cp.catch && pots.cradleMode === 'idle' && !this.playerDoing('tip') && this.free('lever')) return claimed(new LeverTask('tip'), 'lever');
     // land a hanging pot
     const hang = pots.hangingPot;
-    if (hang && hang.item && !hang.item.heldBy) return claimed(new LandTask(hang), 'land');
+    if (hang && hang.item && !hang.item.heldBy && this.free('land')) return claimed(new LandTask(hang), 'land');
     // haul
     const bp = pots.blockPot;
-    if (bp && (bp.state === 'onBlock' || bp.state === 'rising') && !this.playerDoing('haul')) return claimed(new HaulTask(), 'haul');
+    if (bp && (bp.state === 'onBlock' || bp.state === 'rising') && !this.playerDoing('haul') && this.free('haul')) return claimed(new HaulTask(), 'haul');
     // rehook a loose pot near the cradle
     const loose = pots.pots.find((q) => q.state === 'deck' && q.item && !q.item.heldBy);
-    if (loose && !pots.blockPot) return claimed(new RehookTask(loose), 'rehook');
+    if (loose && !pots.blockPot && this.free('rehook')) return claimed(new RehookTask(loose), 'rehook');
     // grapple a buoy that's alongside
     const nav = this.ctx.sys.nav;
     const target = trip?.haulTarget?.() as Pot | null;
     if (target && target.state === 'soaking' && target.buoy && nav?.arrived && !pots.blockPot && !this.anyoneHolds('grapple') && !this.anyoneHolds('lineEnd')) {
       const g = this.ctx.sys.grapple;
-      if (g.grapple.mode === 'fixed' || (g.grapple.mode === 'deck' && !g.grapple.heldBy)) return claimed(new GrappleTask(target), 'grapple');
+      if ((g.grapple.mode === 'fixed' || (g.grapple.mode === 'deck' && !g.grapple.heldBy)) && this.free('grapple')) return claimed(new GrappleTask(target), 'grapple');
     }
     if (c.held && c.held.kind === 'grapple' && target) return claimed(new GrappleTask(target), 'grapple');
     // setting: bait & launch
     if (cp && cp.state === 'cradle' && !cp.catch && pots.settingAllowed) {
-      if (!cp.baited && !(p.held && p.held.kind === 'baitJar')) return claimed(new BaitTask(), 'bait');
-      if (cp.baited && pots.launchWanted && !this.playerDoing('launch')) return claimed(new LeverTask('launch'), 'lever');
+      if (!cp.baited && !(p.held && p.held.kind === 'baitJar') && this.free('bait')) return claimed(new BaitTask(), 'bait');
+      if (cp.baited && pots.launchWanted && !this.playerDoing('launch') && this.free('lever')) return claimed(new LeverTask('launch'), 'lever');
     }
     return null;
+  }
+
+  /** A claim nobody else holds (so a task we pick can actually be started). */
+  private free(key: string): boolean {
+    const h = this.board.holder(key);
+    return !h || h === this.crew.id;
   }
 
   private anyoneHolds(kind: string): boolean {
@@ -365,7 +371,7 @@ export class BotBrain {
       return claimed(new SortTask(it), k);
     }
     let best: Item | null = null;
-    let bd = 9;
+    let bd = Infinity;
     for (const it of crabs.crabs as Item[]) {
       if (it.mode !== 'deck' || it.heldBy) continue;
       const k = 'crab:' + it.id;
@@ -581,19 +587,74 @@ class LandTask extends Task {
   }
 }
 
+/** Where a stray pot gets dragged to so it can be re-hooked (just aft of the cradle). */
+const REHOOK_SPOT = new THREE.Vector3(-1.4, 0, -0.9);
+
 class RehookTask extends Task {
   name = 'rehook';
   pri = 63;
+  /** +1: pull it from the cradle side · −1: push it from behind · 0: can't get at it (yet) */
+  private side = 0;
+  private sideT = 0;
+  private stuckT = 0;
   constructor(private pot: Pot) {
     super();
   }
-  step(b: BotBrain): Status {
+  step(b: BotBrain, dt: number): Status {
     const it = this.pot.item;
+    const c = b.crew;
     if (this.pot.state !== 'deck' || !it) return 'done';
-    const p = it.localPos(new THREE.Vector3());
-    if (!b.goTo(p, 2.0)) return 'run';
-    b.pressInteract(it.data.iaId);
-    return this.t > 8 ? 'fail' : 'run';
+    const pots = b.pots;
+    const p = it.localPos(new THREE.Vector3()).setY(0);
+    if (!c.held) this.stuckT = this.side ? 0 : this.stuckT + dt;
+    if ((this.t > 30 || this.stuckT > 5) && !pots.blockPot && !pots.cradlePot) {
+      // still stuck: Mo swings the block over and hooks it where it lies
+      pots.rehook(this.pot);
+      return 'done';
+    }
+    if (pots.nearCradle(p)) {
+      // close enough: let go and hook it on
+      if (c.held === it) return 'run'; // use is released this step
+      if (!b.goTo(p, 2.0)) return 'run';
+      b.pressInteract(it.data.iaId);
+      return 'run';
+    }
+    const dir = REHOOK_SPOT.clone().sub(p).setY(0).normalize();
+    // stand just clear of the pot's square footprint on the nav grid, whatever the direction
+    const off = 1.5 / Math.max(Math.abs(dir.x), Math.abs(dir.z));
+    if (c.held !== it) {
+      if (it.heldBy) return 'fail';
+      // a pot lying across the deck can cut it in two: pick a side we can actually reach
+      this.sideT -= dt;
+      if (this.sideT <= 0) {
+        this.sideT = 1.5;
+        const me = c.pos(new THREE.Vector3());
+        const reach = (s: number) => {
+          const at = p.clone().addScaledVector(dir, off * s);
+          if (!b.grid.isFree(at.x, at.z)) return false;
+          b.grid.path(me, at);
+          return b.grid.lastPathOk;
+        };
+        this.side = reach(1) ? 1 : reach(-1) ? -1 : 0;
+      }
+      if (!this.side) return 'run';
+      if (!b.goTo(p.clone().addScaledVector(dir, off * this.side), 0.45)) return 'run';
+      b.holdUse(it.data.iaId);
+      return 'run';
+    }
+    // holding it (we face it): pull = back away past the spot · push = walk it onto the spot.
+    // Steer straight — the pot itself is marked as an obstacle on the grid.
+    b.holdUse(it.data.iaId);
+    const goal = REHOOK_SPOT.clone().addScaledVector(dir, 1.45 * (this.side || 1));
+    const me = c.pos(new THREE.Vector3());
+    const dx = goal.x - me.x,
+      dz = goal.z - me.z;
+    const d = Math.hypot(dx, dz);
+    if (d > 0.3) c.input.move.set((dx / d) * b.speed * 0.8, (dz / d) * b.speed * 0.8);
+    return 'run';
+  }
+  onEnd(b: BotBrain): void {
+    if (this.pot.item && b.crew.held === this.pot.item) b.releaseUse();
   }
 }
 
@@ -744,7 +805,11 @@ class HatTask extends Task {
   step(b: BotBrain): Status {
     if (b.crew.hatOn || this.hat.mode !== 'deck') return 'done';
     b.goTo(this.hat.localPos(new THREE.Vector3()), 0.3);
-    return this.t > 15 ? 'fail' : 'run';
+    if (this.t > 15) {
+      b.crew.abandonHat(); // can't reach it; the spare on the galley hook will do
+      return 'fail';
+    }
+    return 'run';
   }
 }
 

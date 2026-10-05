@@ -148,6 +148,13 @@ export class Hud {
     if (this.tripEl.innerHTML !== html) this.tripEl.innerHTML = html;
   }
 
+  private tankBump = 0;
+  /** A little bounce on the trip panel when a crab goes into the tank. */
+  bumpTank(): void {
+    this.tankBump = 0.3;
+    this.tripEl.classList.add('bump');
+  }
+
   setPortraits(list: { id: string; name: string; color: string; status: string }[]): void {
     if (this.portraitsEl.children.length !== list.length) {
       this.portraitsEl.innerHTML = '';
@@ -247,6 +254,10 @@ export class Hud {
     if (this.bigTimer > 0) {
       this.bigTimer -= dt;
       if (this.bigTimer <= 0) this.bigEl.classList.remove('on');
+    }
+    if (this.tankBump > 0) {
+      this.tankBump -= dt;
+      if (this.tankBump <= 0) this.tripEl.classList.remove('bump');
     }
     const w = window.innerWidth,
       h = window.innerHeight;

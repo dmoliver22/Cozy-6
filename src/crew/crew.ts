@@ -19,6 +19,7 @@ import { PART_NAMES, type Ragdoll, type RagdollPool } from './ragdoll';
 import type { Ctx } from '../game/ctx';
 import { events } from '../core/events';
 import { sfx } from '../audio';
+import type { Rng } from '../core/rng';
 
 export type CrewId = 'player' | 'mo' | 'dot' | 'ike';
 export type CrewState = 'stand' | 'down' | 'getup' | 'sea' | 'helm' | 'boarding' | 'off';
@@ -103,6 +104,8 @@ export class Crew {
   /** If set, the crew is attached to the wheel. */
   atHelm = false;
 
+  private rng: Rng;
+
   constructor(
     readonly id: CrewId,
     readonly name: string,
@@ -111,6 +114,7 @@ export class Crew {
     private pool: RagdollPool,
     spawn: THREE.Vector3,
   ) {
+    this.rng = ctx.rng.stream('crew:' + id);
     this.createBody(spawn);
     this.facing = Math.PI * 0.5;
     ctx.boatGroup.add(view.root);
@@ -178,6 +182,12 @@ export class Crew {
       return out;
     }
     this.forward(_v3);
+    const h = this.held;
+    if (h && h.def.carry === 'push' && h.def.shape.type === 'box') {
+      // a heavy box sits just clear of us, not in our arms
+      out.addScaledVector(_v3, config.crew.radius + Math.max(h.def.shape.half[0], h.def.shape.half[2]) + 0.1);
+      return out;
+    }
     out.addScaledVector(_v3, 0.62);
     out.y += 0.28;
     return out;
@@ -193,6 +203,7 @@ export class Crew {
   step(dt: number): void {
     this.vocalCooldown = Math.max(0, this.vocalCooldown - dt);
     this.stagger = Math.max(0, this.stagger - dt);
+    if (this.state === 'stand' || this.state === 'helm' || this.state === 'down' || this.state === 'getup') this.belowDeckNet();
     switch (this.state) {
       case 'stand':
       case 'helm':
@@ -285,6 +296,10 @@ export class Crew {
       wantFacing = 0;
     } else if ((this.throwAiming || inp.throwAim) && inp.aim) {
       wantFacing = Math.atan2(inp.aim.x - p.x, inp.aim.z - p.z);
+    } else if (this.held && this.held.def.carry === 'push' && !this.held.data.guide && this.held.body) {
+      // shoving or dragging something heavy: keep facing it
+      const t = this.held.body.translation();
+      wantFacing = Math.atan2(t.x - p.x, t.z - p.z);
     } else if (mlen > 0.15) {
       wantFacing = Math.atan2(mx, mz);
     } else if (inp.face) {
@@ -498,7 +513,8 @@ export class Crew {
     if (vel.length() > maxS) vel.setLength(maxS);
     this.releaseHeld();
     it.body.setLinvel({ x: vel.x, y: vel.y, z: vel.z }, true);
-    it.body.setAngvel({ x: (Math.random() - 0.5) * 8, y: (Math.random() - 0.5) * 12, z: (Math.random() - 0.5) * 8 }, true);
+    const r = this.rng;
+    it.body.setAngvel({ x: (r.next() - 0.5) * 8, y: (r.next() - 0.5) * 12, z: (r.next() - 0.5) * 8 }, true);
     sfx.play('throw', { volume: 0.7, pitch: 0.9 + d * 0.02 });
     this.ctx.sys.onThrow?.(this, it, target.clone());
   }
@@ -802,6 +818,25 @@ export class Crew {
     }
   }
 
+  /**
+   * Safety net: nothing on deck may end up under the deck plate. Near (or past) the hull edge
+   * that means over the side, so go overboard; inside the hull, lift back onto the deck.
+   */
+  private belowDeckNet(): void {
+    const p = this.ragdoll ? this.ragdoll.pelvis(_v) : this.pos(_v);
+    if (p.y > -0.6) return;
+    if (ItemManager.outsideHull(p, -0.2)) {
+      this.goOverboard();
+      return;
+    }
+    if (this.ragdoll) {
+      this.ragdoll.lift(0.45 - p.y);
+    } else {
+      this.body.setTranslation({ x: p.x * 0.85, y: CENTER_Y + 0.2, z: p.z }, true);
+      this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Overboard (sea state, world space)
   goOverboard(): void {
@@ -909,7 +944,8 @@ export class Crew {
     hat.rotation.set(0, 0, 0);
     const it = this.ctx.items.add(ITEM_DEFS.hat, hat, p, { vel });
     it.data.owner = this.id;
-    it.body?.setAngvel({ x: (Math.random() - 0.5) * 14, y: (Math.random() - 0.5) * 10, z: (Math.random() - 0.5) * 14 }, true);
+    const r = this.rng;
+    it.body?.setAngvel({ x: (r.next() - 0.5) * 14, y: (r.next() - 0.5) * 10, z: (r.next() - 0.5) * 14 }, true);
     it.onToSea = () => {
       this.hatRespawn = config.crew.hatRespawnSec;
     };
@@ -921,6 +957,15 @@ export class Crew {
   private stepHat(dt: number): void {
     if (this.hatOn) return;
     const it = this.hatItem;
+    // a hat nobody reaches for a long while (on the roof, wedged somewhere): a fresh one turns up on the hook
+    if (it && it.mode === 'deck' && !it.heldBy) {
+      this.hatDeckTime += dt;
+      if (this.hatDeckTime > 45) {
+        this.hatDeckTime = 0;
+        this.abandonHat();
+        return;
+      }
+    } else this.hatDeckTime = 0;
     if (it && it.mode === 'deck' && this.isUp && !it.heldBy) {
       // walk past it → pop it back on
       const p = this.pos(_v);
@@ -958,6 +1003,17 @@ export class Crew {
       const p = this.pos(_v);
       if (p.distanceTo(it.fixedPos) < 1.3) this.wearHat();
     }
+  }
+
+  private hatDeckTime = 0;
+  /** Give up on a hat that blew somewhere awkward: a fresh one turns up on the galley hook. */
+  abandonHat(): void {
+    const it = this.hatItem;
+    if (this.hatOn || !it || it.mode !== 'deck' || it.heldBy) return;
+    it.view = null; // keep the hat group for the respawn
+    this.ctx.items.remove(it);
+    this.hatItem = null;
+    this.hatRespawn = 2;
   }
 
   wearHat(): void {

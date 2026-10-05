@@ -31,6 +31,7 @@ export class IceSystem {
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.1);
     this.mallet = ctx.items.add(ITEM_DEFS.mallet, makeMallet(), L.malletHook.clone(), { fixed: true, quat: q });
     this.mallet.data.label = 'ice mallet';
+    this.mallet.home = { p: L.malletHook.clone(), q, afterSec: 25 };
     const iceMat = () => new THREE.MeshBasicMaterial({ color: 0xe6f6ff, transparent: true, opacity: 0, depthWrite: false });
     const railMat = new THREE.MeshToonMaterial({ color: 0xeaf7ff, transparent: true, opacity: 0.85 });
     ICE_ZONE_ROWS.forEach(([z0, z1], row) => {

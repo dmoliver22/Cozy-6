@@ -193,6 +193,7 @@ export const config = {
     potSpacing: 15,
     soakFillPerMin: 3.4, // crab per minute in an average spot
     maxCatchBodies: 10,
+    maxCrabsOnDeck: 40, // more than this and a tipped pot's catch goes straight down the chute (body budget ≤ 80)
     haulSpeed: 1.25, // m/s line speed
     fasterHaulerScale: 1.6,
     potDepth: 9,
@@ -316,7 +317,7 @@ export const config = {
 export type Config = typeof config;
 export const DEG = deg;
 
-/** URL overrides for quick tuning/testing, e.g. ?seed=7&phase=storm&skipTutorial=1 */
+/** URL overrides for quick tuning/testing, e.g. ?seed=7&weather=storm&skipTutorial=1&autostart=1 */
 export function applyUrlOverrides(): Record<string, string> {
   const out: Record<string, string> = {};
   try {

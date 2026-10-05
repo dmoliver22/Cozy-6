@@ -75,6 +75,9 @@ export class Item {
   visible = true;
   stuckTime = 0;
   roofTime = 0;
+  /** Gear with a hook: left lying (or lost over the side) too long, a spare turns up on the hook. */
+  home: { p: THREE.Vector3; q: THREE.Quaternion; afterSec: number } | null = null;
+  idleT = 0;
   /** free-form per-kind data */
   data: Record<string, any> = {};
   /** hooks */
@@ -336,6 +339,15 @@ export class ItemManager {
     const margin = config.deck.overboardMargin;
     for (let i = this.items.length - 1; i >= 0; i--) {
       const it = this.items[i];
+      if (it.home && !it.heldBy && (it.mode === 'deck' || it.mode === 'sea')) {
+        // sea time counts double: the spare comes out quicker when the original's gone over
+        it.idleT += it.mode === 'sea' ? dt * 2 : dt;
+        if (it.idleT > it.home.afterSec) {
+          it.idleT = 0;
+          this.fix(it, it.home.p, it.home.q);
+          continue;
+        }
+      } else it.idleT = 0;
       if (it.mode !== 'deck' || !it.body) continue;
       it.state.capture(it.body);
       const p = it.state.currP;
@@ -344,8 +356,13 @@ export class ItemManager {
         this.toSea(it);
         continue;
       }
+      // under the deck plate right at the hull edge: it went over the side
+      if (p.y < -0.8 && !it.heldBy && !it.def.noOverboard && ItemManager.outsideHull(p, -0.2)) {
+        this.toSea(it);
+        continue;
+      }
       // unstick: fell through the deck, or stranded on the wheelhouse roof
-      if (p.y < -0.8 && !ItemManager.outsideHull(p, -0.2)) {
+      if (p.y < -0.8 && (it.def.noOverboard || !ItemManager.outsideHull(p, -0.2))) {
         it.stuckTime += dt;
         if (it.stuckTime > 0.3) {
           it.body.setTranslation({ x: p.x * 0.8, y: 0.6, z: p.z }, true);

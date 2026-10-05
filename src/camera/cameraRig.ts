@@ -49,7 +49,9 @@ export class CameraRig {
   /** first-person look angles relative to the boat (0 = bow, + = toward port / up) */
   fpYaw = 0;
   fpPitch = -0.12;
-  pushIn = 0; // golden crab camera push
+  pushIn = 0; // golden crab camera push (eased 0..1)
+  private pushHold = 0;
+  private readonly pushFocus = new THREE.Vector3();
   readonly ohPos = new THREE.Vector3();
   readonly ohQuat = new THREE.Quaternion();
   readonly fpPos = new THREE.Vector3();
@@ -66,6 +68,12 @@ export class CameraRig {
   }
   toggle(): void {
     this.setMode(this.mode === 'overhead' ? 'fp' : 'overhead');
+  }
+
+  /** Ease the overhead camera in toward a world point for a moment (the golden crab). */
+  pushTo(world: THREE.Vector3, seconds = 1.8): void {
+    this.pushFocus.copy(world);
+    this.pushHold = seconds;
   }
 
   addShake(amount: number): void {
@@ -93,6 +101,7 @@ export class CameraRig {
     _v.set(0, 0, -1.2).applyQuaternion(i.boatQuat).add(i.boatPos);
     _v.lerp(i.focusWorld, clamp(this.zoom * 1.1, 0, 1));
     _v.y = lerp(i.boatPos.y, _v.y, 0.5);
+    if (this.pushIn > 0.001) _v.lerp(this.pushFocus, this.pushIn * 0.6);
     if (!this.initialised) {
       this.target.copy(_v);
       this.yaw = wantYaw;
@@ -153,6 +162,7 @@ export class CameraRig {
       this.camera.position.add(_v);
       this.shake = damp(this.shake, 0, 5, dt);
     }
-    this.pushIn = damp(this.pushIn, 0, 1.8, dt);
+    this.pushHold -= dt;
+    this.pushIn = this.pushHold > 0 ? damp(this.pushIn, 1, 3.5, dt) : damp(this.pushIn, 0, 1.6, dt);
   }
 }

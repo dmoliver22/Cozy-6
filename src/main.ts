@@ -17,6 +17,7 @@ async function boot() {
   // the sea idles behind the title until we cast off
   game.loop.paused = true;
   game.hud.setVisible(false);
+  if (params.weather === 'calm' || params.weather === 'choppy' || params.weather === 'storm') game.weather.force(params.weather);
   const first = game.save.tripsCompleted === 0;
   if (params.autostart === '1') game.beginTrip(params.skipTutorial === '1' || !first);
   else if (first) showTitle(app, true, () => game.beginTrip(params.skipTutorial === '1'));

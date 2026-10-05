@@ -112,12 +112,17 @@ export class NavGrid {
   }
 
   /** A* path from a to b (local XZ), smoothed. Returns waypoints (excluding start). */
+  /** Whether the last path() call found a real route (false = it fell back to a straight line). */
+  lastPathOk = true;
+
   path(a: THREE.Vector3, b: THREE.Vector3): THREE.Vector3[] {
     const goal = this.nearestFree(b, new THREE.Vector3());
     const start = this.nearestFree(a, new THREE.Vector3());
+    this.lastPathOk = true;
     if (this.lineFree(a, goal)) return [goal];
     const s = this.idx(start.x, start.z),
       g = this.idx(goal.x, goal.z);
+    this.lastPathOk = false;
     if (s < 0 || g < 0) return [goal];
     const N = W * H;
     const gScore = new Float32Array(N).fill(Infinity);
@@ -166,6 +171,7 @@ export class NavGrid {
         }
     }
     if (came[g] < 0 && g !== s) return [goal];
+    this.lastPathOk = true;
     const cells: THREE.Vector3[] = [];
     for (let k = g; k !== s && k >= 0; k = came[k]) cells.push(this.center(k, new THREE.Vector3()));
     cells.reverse();

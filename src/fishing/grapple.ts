@@ -36,6 +36,7 @@ export class GrappleSystem {
   constructor(private ctx: Ctx) {
     ctx.sys.grapple = this;
     this.grapple = ctx.items.add(GRAPPLE_DEF, makeGrapple(), this.home.clone(), { fixed: true, quat: this.homeQ });
+    this.grapple.home = { p: this.home, q: this.homeQ, afterSec: 20 };
     this.grapple.onSeaLand = () => this.onLand();
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(this.linePos, 3));

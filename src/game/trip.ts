@@ -194,6 +194,7 @@ export class Trip {
   }
 
   private tutorialSwell(): void {
+    if (this.tutStep === 'swell' || this.tutStep === 'done') return;
     this.tutStep = 'swell';
     this.ctx.sys.tutorialGag = true;
     later(1.6, () => {

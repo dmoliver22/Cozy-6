@@ -12,7 +12,7 @@ import { config, DEG } from '../config';
 import { clamp, easeInOut, lerp, smoothstep } from '../core/math';
 import { BodyState } from '../deck/deckWorld';
 import { CG } from '../deck/groups';
-import type { Item, ItemDef } from '../deck/items';
+import { ItemManager, type Item, type ItemDef } from '../deck/items';
 import { interactableId, type Interactable, type Verb } from '../deck/interact';
 import { L } from '../boat/layout';
 import { makePot, type PotView } from '../art/pot';
@@ -92,6 +92,7 @@ export class Pot {
   readonly prevWp = new THREE.Vector3();
   readonly wq = new THREE.Quaternion();
   fallT = 0;
+  splashed = false;
   hauled = false;
   otter: THREE.Object3D | null = null;
   heldPrev = false;
@@ -583,10 +584,11 @@ export class PotSystem {
         pot.prevWp.copy(pot.wp);
         pot.fallT += dt;
         const h = this.ctx.sea.height(pot.wp.x, pot.wp.z);
-        if (pot.wp.y > h - 0.2) {
+        if (!pot.splashed) {
           pot.wv.y -= config.sim.gravity * dt;
           pot.wp.addScaledVector(pot.wv, dt);
           if (pot.wp.y <= h) {
+            pot.splashed = true;
             sfx.play('splash', { volume: 1, pitch: 0.75 });
             this.ctx.sys.spray?.splashWorld(pot.wp, 1.4);
             pot.wv.set(pot.wv.x * 0.1, -1.6, pot.wv.z * 0.1);
@@ -631,6 +633,15 @@ export class PotSystem {
         const it = pot.item;
         if (it && it.body) {
           const p = it.localPos(_v);
+          // 40 kg of steel never leaves the boat: if a sea shoved it over the rail or under the
+          // deck plate, it's hanging off its line — drag it back aboard by the cradle.
+          if (!it.heldBy && (p.y < -0.6 || ItemManager.outsideHull(p, 0))) {
+            it.body.setTranslation({ x: -1.6, y: PH / 2 + 0.1, z: L.cradle.center.z - 2.05 }, true);
+            it.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+            it.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+            sfx.play('thunk', { volume: 0.6, pitch: 0.8 });
+            break;
+          }
           it.data.label = this.nearCradle(p) ? 'loose pot — re-hook it!' : 'loose pot (push it back to the block)';
         }
         break;
@@ -639,8 +650,9 @@ export class PotSystem {
     if (pot.state === 'cradle' && pot.view.drips.visible && this.ctx.time - pot.landedAt > 3) pot.view.setDrip(0);
   }
 
-  private nearCradle(p: THREE.Vector3): boolean {
-    return Math.abs(p.x - L.cradle.center.x) < 2.3 && Math.abs(p.z - L.cradle.center.z) < 2.6;
+  /** Close enough for the block to reach: the working deck around and aft of the cradle. */
+  nearCradle(p: THREE.Vector3): boolean {
+    return Math.abs(p.x - L.cradle.center.x) < 3.2 && p.z > L.cradle.center.z - 5.1 && p.z < L.cradle.center.z + 2.6;
   }
 
   /** Manual rope: only pulls when stretched (a soft inextensible line). */
@@ -687,6 +699,7 @@ export class PotSystem {
         _v.set(-2.6, -0.5, 0).applyQuaternion(this.ctx.boat.quat);
         pot.wv.add(_v);
         pot.fallT = 0;
+        pot.splashed = false;
         pot.wq.copy(this.ctx.boat.quat).multiply(pot.kinQ);
         pot.quality = 0.7 + this.spotRng.next() * 0.6;
         events.emit('potLaunched', { index: pot.number, string: pot.stringNo });
@@ -727,7 +740,7 @@ export class PotSystem {
     pot.catch = null;
     pot.view.setFullness(0);
     const crabs = this.crabs;
-    const maxBodies = 44;
+    const maxBodies = config.fishing.maxCrabsOnDeck;
     const onDeck = crabs.crabs.filter((x) => x.mode === 'deck').length;
     let spawned = 0;
     let auto = 0;
@@ -739,8 +752,9 @@ export class PotSystem {
         if (data.keep) crabs.tank.push({ species: data.species, weight: data.weight, correct: true, at: this.ctx.time });
         return;
       }
-      const p = new THREE.Vector3(-1.05 + Math.random() * 0.3, 1.5 + Math.random() * 0.4, L.cradle.center.z - 0.7 + (i % 6) * 0.28);
-      const v = new THREE.Vector3(1.6 + Math.random() * 1.6, 1.2 + Math.random() * 1.2, (Math.random() - 0.5) * 1.4);
+      const r = this.spotRng;
+      const p = new THREE.Vector3(-1.05 + r.next() * 0.3, 1.5 + r.next() * 0.4, L.cradle.center.z - 0.7 + (i % 6) * 0.28);
+      const v = new THREE.Vector3(1.6 + r.next() * 1.6, 1.2 + r.next() * 1.2, (r.next() - 0.5) * 1.4);
       later((i * 55) / 1000, () => crabs.spawn(p, data, v));
       spawned++;
       if (data.species === 'golden') golden = true;

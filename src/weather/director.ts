@@ -11,7 +11,7 @@ import type { Ctx } from '../game/ctx';
 import type { Phase } from '../game/trip';
 import type { Rng } from '../core/rng';
 
-type WPhase = 'calm' | 'choppy' | 'storm';
+export type WPhase = 'calm' | 'choppy' | 'storm';
 interface WState {
   swell: number;
   wind: number;
@@ -63,9 +63,28 @@ export class WeatherDirector {
     return this.cur.wind;
   }
 
+  /** Testing: pin the weather to one phase for the whole trip (?weather=storm). Storm rogue sets never run out. */
+  forced: WPhase | null = null;
+  force(w: WPhase): void {
+    this.forced = null;
+    this.phase = w === 'calm' ? 'choppy' : 'calm'; // make setPhase below see a change
+    this.applyWeather(w);
+    Object.assign(this.cur, this.target);
+    if (w === 'storm') this.stormRoguesLeft = Infinity;
+    this.forced = w;
+  }
+
   setPhase(p: Phase): void {
     this.tripPhase = p;
-    const w = TRIP_TO_WEATHER[p];
+    if (this.forced) return;
+    this.applyWeather(TRIP_TO_WEATHER[p]);
+    if (p === 'home') {
+      // the run home: at most one more rogue
+      this.stormRoguesLeft = Math.min(this.stormRoguesLeft, 1);
+    }
+  }
+
+  private applyWeather(w: WPhase): void {
     if (w !== this.phase) {
       this.phase = w;
       this.target = { ...config.weather.phases[w] };
@@ -80,10 +99,6 @@ export class WeatherDirector {
         }
       }
       if (w === 'calm') this.nextRogue = Infinity;
-    }
-    if (p === 'home') {
-      // the run home: at most one more rogue
-      this.stormRoguesLeft = Math.min(this.stormRoguesLeft, 1);
     }
   }
 

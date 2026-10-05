@@ -9,13 +9,33 @@ import type { Ctx } from '../game/ctx';
 const _v = new THREE.Vector3();
 const _d = new THREE.Vector3();
 
+interface Ripple {
+  mesh: THREE.Mesh;
+  mat: THREE.MeshBasicMaterial;
+  age: number;
+  life: number;
+  size: number;
+}
+
 export class SprayFx {
   readonly world: ParticleCloud;
   readonly local: ParticleCloud;
   readonly shards: ParticleCloud;
   private bowCooldown = 0;
+  private ripples: Ripple[] = [];
+  private rippleNext = 0;
 
   constructor(private ctx: Ctx, capacity: number) {
+    // a small pool of expanding rings for things plopping into the sea
+    const ringGeo = new THREE.RingGeometry(0.8, 1, 32).rotateX(-Math.PI / 2);
+    for (let i = 0; i < 8; i++) {
+      const mat = new THREE.MeshBasicMaterial({ color: 0xeaf6f4, transparent: true, opacity: 0, depthWrite: false });
+      const mesh = new THREE.Mesh(ringGeo, mat);
+      mesh.visible = false;
+      mesh.renderOrder = 3;
+      ctx.scene.add(mesh);
+      this.ripples.push({ mesh, mat, age: 0, life: 1, size: 1 });
+    }
     this.world = new ParticleCloud(capacity, 0xeaf2f0, 320);
     this.world.floor = (x, z) => ctx.sea.height(x, z);
     ctx.scene.add(this.world.points);
@@ -54,6 +74,17 @@ export class SprayFx {
     }
   }
 
+  /** An expanding ripple ring on the sea surface (world point). */
+  ripple(p: THREE.Vector3, size = 1, life = 1.3): void {
+    const r = this.ripples[this.rippleNext];
+    this.rippleNext = (this.rippleNext + 1) % this.ripples.length;
+    r.age = 0;
+    r.life = life;
+    r.size = size;
+    r.mesh.position.set(p.x, 0, p.z);
+    r.mesh.visible = true;
+  }
+
   shardBurst(p: THREE.Vector3, count: number, big = false): void {
     for (let i = 0; i < count; i++) {
       _d.set((Math.random() - 0.5) * 3, 1 + Math.random() * 2.5, (Math.random() - 0.5) * 3).multiplyScalar(big ? 1.4 : 1);
@@ -79,6 +110,19 @@ export class SprayFx {
   }
 
   update(dt: number): void {
+    for (const r of this.ripples) {
+      if (!r.mesh.visible) continue;
+      r.age += dt;
+      const k = r.age / r.life;
+      if (k >= 1) {
+        r.mesh.visible = false;
+        continue;
+      }
+      const sc = r.size * (0.15 + Math.sqrt(k) * 0.9);
+      r.mesh.scale.set(sc, 1, sc);
+      r.mesh.position.y = this.ctx.sea.height(r.mesh.position.x, r.mesh.position.z) + 0.04;
+      r.mat.opacity = 0.7 * (1 - k) * Math.min(1, k * 8);
+    }
     this.world.update(dt);
     this.local.update(dt);
     this.shards.update(dt);

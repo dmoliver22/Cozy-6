@@ -129,6 +129,16 @@ export class Ragdoll {
     const v = this.bodies.chest.linvel();
     return out.set(v.x, v.y, v.z);
   }
+  /** Move every part up by dy and kill downward motion (fell through the deck). */
+  lift(dy: number): void {
+    for (const name of PART_NAMES) {
+      const b = this.bodies[name];
+      const t = b.translation();
+      const v = b.linvel();
+      b.setTranslation({ x: t.x, y: t.y + dy, z: t.z }, true);
+      b.setLinvel({ x: v.x, y: Math.max(0, v.y), z: v.z }, true);
+    }
+  }
   /** Apply the same impulse distributed by mass (wash pushes, vaults). */
   pushAll(dv: THREE.Vector3): void {
     for (const name of PART_NAMES) {

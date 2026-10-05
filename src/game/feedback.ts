@@ -80,9 +80,13 @@ export class Feedback {
       if (id === 'player') haptics.buzz(config.haptics.pinch);
     });
     on('crabKept', ({ correct }) => {
-      const it = ctx.sys.crabs;
-      void it;
-      hud.pop(correct ? '+1' : '+1?', new THREE.Vector3(0.7, 0.8, -2.0), correct ? 'plus' : 'bad', 0.9);
+      hud.pop(correct ? '+1' : '+1?', _v.set(0.7, 0.8, -2.0), correct ? 'plus' : 'bad', 0.9);
+      hud.bumpTank();
+    });
+    on('golden', ({ localPos }) => {
+      rig.pushTo(ctx.boat.localToWorld(_v.copy(localPos), new THREE.Vector3()), 1.8);
+      hud.big('GOLDEN!');
+      haptics.buzz([20, 30, 20, 30, 60]);
     });
   }
 

@@ -25,6 +25,8 @@ export interface CrabData {
   nextScuttle: number;
   dir: number;
   hatched?: boolean;
+  squash?: number; // 0..1 landing squash, decays
+  vyPrev?: number;
 }
 
 const MAX = 96;
@@ -96,6 +98,10 @@ export class CrabSystem {
     it.data.crab = data;
     data.nextScuttle = this.ctx.time + this.rng.range(0.4, 1.2);
     it.onToSea = () => this.onReleased(it);
+    it.onSeaLand = () => {
+      this.ctx.sys.spray?.ripple(it.wp, 0.9 * data.size);
+      this.ctx.sys.spray?.splashWorld(it.wp, 0.2);
+    };
     this.crabs.push(it);
     return it;
   }
@@ -140,6 +146,11 @@ export class CrabSystem {
       if (it.mode !== 'deck' || !it.body) continue;
       const d = it.data.crab as CrabData;
       const p = it.localPos(_v);
+      // squash when a falling crab hits the deck
+      const vy = it.body.linvel().y;
+      if ((d.vyPrev ?? 0) < -1.6 && vy > -0.4) d.squash = Math.min(1, -(d.vyPrev ?? 0) / 4);
+      d.vyPrev = vy;
+      if (d.squash) d.squash = Math.max(0, d.squash - dt * 5);
       // into the tank hatch?
       if (Math.abs(p.x - h.center.x) < h.half && Math.abs(p.z - h.center.z) < h.half && p.y < h.coaming + 0.15) {
         if (!it.heldBy) {
@@ -196,8 +207,9 @@ export class CrabSystem {
       const set = this.meshes[d.sex];
       const k = counts[d.sex];
       if (k >= MAX) continue;
-      // squash on bounce (tiny), wiggle when held
-      _s.set(d.size, d.size, d.size);
+      // squash on landing
+      const sq = d.squash ?? 0;
+      _s.set(d.size * (1 + sq * 0.22), d.size * (1 - sq * 0.4), d.size * (1 + sq * 0.22));
       _m.compose(it.renderP, it.renderQ, _s);
       set.body.setMatrixAt(k, _m);
       set.flap.setMatrixAt(k, _m);

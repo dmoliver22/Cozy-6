@@ -229,6 +229,7 @@ export class Game {
       zoom: (d) => (this.rig.zoom = clamp(this.rig.zoom + d * 0.08, 0, 1)),
     });
     this.player.touch = this.touch;
+    if (this.touch.active) this.player.lastDevice = 'touch';
     this.aim = new AimViz(this.boatGroup);
     this.ctx.sys.hud = this.hud;
     this.stage.scene.add(this.stage.camera); // so first-person mittens (camera children) render
@@ -425,7 +426,8 @@ export class Game {
       this.setQuality(order[i - 1]);
       this.qualityCooldown = config.render.autoDowngradeWindowSec * 2;
       this.frameTimes.length = 0;
-    } else if (avg < config.render.autoUpgradeMs && i < 2 && !this.stage.isPhone) {
+    } else if (avg < config.render.autoUpgradeMs && i < (this.stage.isPhone ? 1 : 2)) {
+      // phones may climb to Medium when there's plenty of headroom, never to High
       this.setQuality(order[i + 1]);
       this.qualityCooldown = 20;
       this.frameTimes.length = 0;
@@ -554,6 +556,16 @@ export class Game {
       const b = pot.buoy!;
       const isTarget = this.trip.haulTarget() === pot;
       if (b.mode === 'sea' && b.visible && (isTarget || this.trip.phase.startsWith('haul') || this.trip.phase.startsWith('transit1'))) inds.push({ world: b.wp.clone().setY(b.wp.y + 2.2), icon: isTarget ? '🎯' : '🟠', color: isTarget ? '#58c46a' : 'rgba(242,194,48,.6)', label: String(pot.number) });
+    }
+    {
+      const tank = this.crabs.tank;
+      const cap = this.crabs.capacity;
+      const kg = tank.reduce((a, e) => a + (e.correct ? e.weight : 0), 0);
+      const gold = tank.filter((e) => e.species === 'golden').length;
+      const full = tank.length >= cap;
+      this.hud.setTrip(
+        `🦀 <b class="${full ? 'full' : ''}">${tank.length}</b>/${cap}${full ? ' <span class="full">full!</span>' : ''} · ${kg.toFixed(1)} kg${gold ? ` · <span class="gold">✨${gold}</span>` : ''}`,
+      );
     }
     const hang = this.pots.hangingPot;
     this.hud.setLevel(!!hang, this.pots.deckLevelDeg(), config.fishing.levelWindowDeg);

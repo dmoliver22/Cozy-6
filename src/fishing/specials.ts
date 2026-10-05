@@ -210,7 +210,7 @@ export class SpecialSystem {
           if (best.collider) best.collider.setCollisionGroups(CG.held);
           sfx.play('chatter', { pitch: 0.8 });
           this.ctx.sys.hud?.toast(`The octopus stole a ${best.data.label ?? best.def.label}! Catch it!`, '#ffb0a0');
-        } else if (Math.random() < dt * 3) {
+        } else if (this.rng.next() < dt * 3) {
           const d = tp.sub(p).setY(0).normalize();
           b.applyImpulse({ x: d.x * 6, y: 2, z: d.z * 6 }, true);
         }
@@ -233,7 +233,7 @@ export class SpecialSystem {
           near = c;
         }
       }
-      if (near && Math.random() < dt * 4) {
+      if (near && this.rng.next() < dt * 4) {
         const away = _v2.copy(p).sub(near.pos(new THREE.Vector3())).setY(0).normalize();
         b.applyImpulse({ x: away.x * 7, y: 2.5, z: away.z * 7 }, true);
       }
