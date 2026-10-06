@@ -25,7 +25,8 @@ if (evalJs) {
   try { result = await page.evaluate(evalJs); } catch (e) { result = 'EVAL ERROR: ' + e.message; }
 }
 if (process.env.WAIT_AFTER) await page.waitForTimeout(Number(process.env.WAIT_AFTER));
-await page.screenshot({ path: out });
 console.log(logs.filter(l=>!l.includes("useProgram")).slice(-40).join('\n'));
 if (result !== null) console.log('RESULT:', typeof result === 'string' ? result : JSON.stringify(result, null, 1));
+// software GL on a busy machine can take a while to produce a frame
+try { await page.screenshot({ path: out, timeout: 120000 }); } catch (e) { console.log('SCREENSHOT FAILED:', e.message.split('\n')[0]); }
 await browser.close();

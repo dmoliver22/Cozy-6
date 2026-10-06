@@ -131,7 +131,11 @@ if (evalJs && frame) {
   }
 }
 if (process.env.WAIT_AFTER) await pageObj.waitForTimeout(Number(process.env.WAIT_AFTER));
-await pageObj.screenshot({ path: out.screenshot });
+try {
+  await pageObj.screenshot({ path: out.screenshot, timeout: 120000 });
+} catch (e) {
+  out.screenshot = 'FAILED: ' + e.message.split('\n')[0];
+}
 console.log(JSON.stringify(out, null, 1));
 await browser.close();
 frameServer.close();
