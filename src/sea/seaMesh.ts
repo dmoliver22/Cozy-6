@@ -77,14 +77,16 @@ const _c = new THREE.Color();
 
 /**
  * The sea's palette (linear, before tone mapping) for the golden-hour and storm poles: the art
- * director's slate teal (troughs ~#12303a, lit crests ~#2e5a62 on screen; storm troughs ~#1b2c35
- * so the swell keeps its form) and a green-teal crest glow. The live look still steers it: each
- * colour is scaled by how far the look's own sea colour sits from its value at the same storm
- * amount (1 when the look is untouched), so retuning look.sea moves the sea with it.
+ * director's deep, desaturated teal (golden troughs ~#1d3032, lit swell ~#2e474b on screen; storm
+ * troughs darker and crests lighter so the swell keeps its form) and a green-teal crest glow. The
+ * live look still steers it: each colour is scaled by how far the look's own sea colour sits from
+ * its value at the same storm amount (1 when the look is untouched), so a runtime change to
+ * look.sea moves the sea with it. Retuning GOLDEN/STORM.sea in look.ts does not (the reference
+ * moves too): scale these by the same ratio.
  */
 const PALETTE = {
-  golden: { deep: new THREE.Color(0.016, 0.043, 0.054), mid: new THREE.Color(0.05, 0.118, 0.132), sub: new THREE.Color(0x3e8c7e) },
-  storm: { deep: new THREE.Color(0.021, 0.039, 0.05), mid: new THREE.Color(0.064, 0.096, 0.108), sub: new THREE.Color(0x4f7f78) },
+  golden: { deep: new THREE.Color(0.012, 0.0314, 0.031), mid: new THREE.Color(0.0349, 0.075, 0.0734), sub: new THREE.Color(0x3e8c7e) },
+  storm: { deep: new THREE.Color(0.0142, 0.0283, 0.0365), mid: new THREE.Color(0.0755, 0.1274, 0.1314), sub: new THREE.Color(0x4f7f78) },
 };
 const LOOK_GOLDEN = computeLook(0, 0, goldenLook());
 const LOOK_STORM = computeLook(1, 0, goldenLook());
@@ -244,7 +246,7 @@ export class SeaMesh {
     const sunLum = look.sunIntensity * ((sc.r + sc.g + sc.b) / 3);
     // x sun strength vs golden hour, y how much the swell's slope is exaggerated for shading
     // (a lot in the low calm swell, little in the storm's big one), z sun luminance
-    (u.uSeaLight.value as THREE.Vector4).set(THREE.MathUtils.clamp(sunLum / GOLDEN_SUN, 0, 1), 2.4 - 1.1 * t, sunLum, 0);
+    (u.uSeaLight.value as THREE.Vector4).set(THREE.MathUtils.clamp(sunLum / GOLDEN_SUN, 0, 1), 1.6 - 0.4 * t, sunLum, 0);
   }
 
   /** Wind for the storm streaks and detail drift (world XZ direction, strength 0..1). Optional. */

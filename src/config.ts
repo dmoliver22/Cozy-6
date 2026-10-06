@@ -28,15 +28,15 @@ export const config = {
     /** …but no more often than this (seconds); Low waits longer */
     envRegenMinSec: 1.5,
     envRegenMinSecLow: 4,
-    /** scene.environmentIntensity at golden hour / full storm (low at golden hour so the sea's
-     * sky reflection stays teal-slate rather than cyan) */
-    envIntensity: [0.45, 0.75] as [number, number],
+    /** scene.environmentIntensity at golden hour / full storm (glossy toy highlights on the crew
+     * and boat; the sea is a ShaderMaterial and does not use it) */
+    envIntensity: [0.75, 0.85] as [number, number],
     /** tilt-shift blur radius at full strength, as a fraction of the screen height */
-    tiltBlur: 0.013,
+    tiltBlur: 0.017,
     /** soft edge between the sharp band and full blur (screen fractions): small = an obvious miniature band */
-    tiltSoft: 0.18,
+    tiltSoft: 0.13,
     /** the sharp band reaches this far (screen fractions) below the hull so the waterline foam and wake stay crisp */
-    tiltBandBelow: 0.06,
+    tiltBandBelow: 0.03,
     /** phones with devicePixelRatio >= 1.5 drop the tilt-shift pass when frames average more than this (ms) */
     phoneTiltSkipMs: 16,
     /** sun shadow softness (PCF radius in texels) */
@@ -46,12 +46,13 @@ export const config = {
   /**
    * Quality tiers. Low renders straight to the canvas (no post passes, no shadows). Medium adds
    * the HDR target with tilt-shift + grade and 1024 shadows. High adds MSAA, bloom and 2048
-   * shadows. msaa is ignored on phones (bandwidth).
+   * shadows. On phones msaa is capped at 2 and used only where the GPU resolves it on chip.
+   * Low's pixelRatio applies only on DPR >= 2 screens (1.0 otherwise).
    */
   quality: {
-    low: { seaSegments: 96, shadows: false, shadowMapSize: 0, post: false, msaa: 0, bloom: false, tilt: false, snow: 500, spray: 120, pixelRatio: 1.0, outline: true },
-    medium: { seaSegments: 160, shadows: true, shadowMapSize: 1024, post: true, msaa: 2, bloom: false, tilt: true, snow: 1200, spray: 240, pixelRatio: 1.25, outline: true },
-    high: { seaSegments: 240, shadows: true, shadowMapSize: 2048, post: true, msaa: 4, bloom: true, tilt: true, snow: 2400, spray: 400, pixelRatio: 2.0, outline: true },
+    low: { seaSegments: 96, shadows: false, shadowMapSize: 0, post: false, msaa: 0, bloom: false, tilt: false, snow: 500, spray: 120, pixelRatio: 1.25, outline: true },
+    medium: { seaSegments: 128, shadows: true, shadowMapSize: 1024, post: true, msaa: 2, bloom: false, tilt: true, snow: 1200, spray: 240, pixelRatio: 1.25, outline: true },
+    high: { seaSegments: 240, shadows: true, shadowMapSize: 2048, post: true, msaa: 4, bloom: true, tilt: true, snow: 2400, spray: 400, pixelRatio: 1.5, outline: true },
   },
 
   sea: {
@@ -270,6 +271,8 @@ export const config = {
       portraitPitchDeg: 52,
       distanceFar: 50, // whole boat
       distanceNear: 15, // close on my deckhand
+      /** phones start this close (0 = whole boat … 1 = close): the boat fills about 65% of a landscape screen */
+      phoneZoom: 0.65,
       followLag: 2.2, // smoothing rate (1/s)
       yawLag: 1.6,
       landscapeYawDeg: 58, // from the starboard quarter: the boat runs diagonally, bow to the upper right (about 30 degrees)

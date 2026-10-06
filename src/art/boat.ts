@@ -71,7 +71,7 @@ import {
   aoEdge,
   isLowTier,
   setLowDetail,
-  tableSteelMat,
+  sortTableTopMat,
   stovePipeMat,
   windowGlassMat,
   hazardStrip,
@@ -1077,7 +1077,7 @@ function buildBoat(low: boolean): BoatArt {
   root.add(spiritGroup);
 
   // =============================================================================================
-  // SORTING TABLE: brushed steel top with varnished lips (matching the lip colliders), a rounded
+  // SORTING TABLE: a scrubbed tan board top with varnished lips (matching the lip colliders), a rounded
   // varnished nosing along the open edge and a drain, on a planked cabinet (solid, like its collider)
   {
     const tb = L.table;
@@ -1088,7 +1088,7 @@ function buildBoat(low: boolean): BoatArt {
     root.add(cbox(w - 0.08, 0.8, d - 0.08, M.darkWood, 0.04, tx, 0.42, tz));
     root.add(cbox(w - 0.04, 0.06, d - 0.04, M.iron, 0.02, tx, 0.03, tz));
     for (const dx of [-1, 1]) for (const dz of [-1, 1]) root.add(cbox(0.1, 0.84, 0.1, M.steel, 0.025, tx + dx * (w / 2 - 0.05), 0.42, tz + dz * (d / 2 - 0.05)));
-    root.add(cbox(w - 0.02, 0.05, d - 0.02, tableSteelMat(), 0.018, tx, 0.875, tz));
+    root.add(cbox(w - 0.02, 0.05, d - 0.02, sortTableTopMat(), 0.018, tx, 0.875, tz));
     root.add(cbox(w + 0.02, 0.03, d + 0.02, M.steel, 0.01, tx, 0.84, tz));
     root.add(cbox(0.07, 0.13, d, M.varnish, 0.03, tx + w / 2, 0.955, tz));
     root.add(cbox(w, 0.13, 0.07, M.varnish, 0.03, tx, 0.955, tz - d / 2));

@@ -2,8 +2,9 @@
  * makePot(): 2 × 0.9 × 2 m king-crab pot: a chunky galvanised round-bar frame with orange corner
  * bumpers and skids, galvanised wire-mesh panels (procedural, anti-aliased wire up close that eases
  * into a semi-opaque tinted panel at a distance or on Low, so a stack reads as stacked boxes),
- * orange webbing entrance tunnels, a single hinged mesh door with a thin rim, and a hanging bait
- * jar with a bait bag. Origin = pot centre. Handles let gameplay show bait, fullness, door, water.
+ * dark teal-grey webbing entrance tunnels (an empty pot reads empty: orange or red inside means
+ * crabs), a single hinged mesh door with a thin rim, and a hanging bait tub with a bait bag.
+ * Origin = pot centre. Handles let gameplay show bait, fullness, door, water.
  *
  * Static parts are folded with mergeStatic() (three draw calls per pot plus two for the door); the
  * catch is one instanced mesh.
@@ -11,7 +12,7 @@
 import * as THREE from 'three';
 import { config } from '../config';
 import { canvasTexture, mergeStatic, metal, plastic } from './materials';
-import { C, K, ball, bar, cbox, cylGeo, isLowTier, meshPanelMat, mergeMeshes, pal, tube, webbingMat } from './props';
+import { C, K, WEB_SOLID_U, ball, bar, cbox, cylGeo, isLowTier, meshPanelMat, mergeMeshes, pal, tube, webbingMat } from './props';
 
 export interface PotView {
   root: THREE.Group;
@@ -54,11 +55,15 @@ function rodZ(r: number, len: number, mat: THREE.Material, x: number, y: number,
   m.position.set(x, y, z);
   return m;
 }
-/** Solid orange bits drawn with the webbing material: every uv points at a knot (alpha 1). */
-function solidWeb<T extends THREE.Mesh>(m: T, web: THREE.Material): T {
+/**
+ * Solid bits drawn with the webbing material: every uv points at a knot (alpha 1). `accent` parts
+ * sit at u = WEB_SOLID_U and take the material's solid colour (the orange bumpers and skids).
+ */
+function solidWeb<T extends THREE.Mesh>(m: T, web: THREE.Material, accent = false): T {
   const g = m.geometry.clone();
   const n = g.attributes.position.count;
   const uv = new Float32Array(n * 2).fill(0.125);
+  if (accent) for (let i = 0; i < n; i++) uv[i * 2] = WEB_SOLID_U;
   g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   m.geometry = g;
   m.material = web;
@@ -106,7 +111,9 @@ export function makePot(): PotView {
   root.name = 'pot';
   const frame = metal(0xbcc4c8, { rough: 0.4, metalness: 0.6 });
   const wire = meshPanelMat(C.galv, 8, { rough: 0.5, metalness: 0.3, wire: 0.06, panel: 0.45, panelOnly: low });
-  const web = webbingMat(C.orange);
+  // orange only on the bumpers and skids (accent parts); the tunnels, tags and bait bag are dark
+  // teal-grey. One material for both, so the merged pot keeps three draw calls
+  const web = webbingMat(0x2f4a48, C.orange);
   const seg = low ? 6 : 8;
   const r = 0.063; // round bar radius
   const hx = W / 2 - r,
@@ -121,8 +128,8 @@ export function makePot(): PotView {
   for (const x of [-hx, hx]) for (const z of [-hz, hz]) root.add(rodY(r, 2 * hy, frame, x, 0, z, seg));
   for (const z of [-hz, hz]) root.add(rodX(r * 0.45, 2 * hx, frame, 0, 0.02, z, 5));
   for (const x of [-hx, hx]) root.add(rodZ(r * 0.45, 2 * hz, frame, x, 0.02, 0, 5));
-  for (const x of [-hx, hx]) for (const y of [-hy, hy]) for (const z of [-hz, hz]) root.add(solidWeb(ball(r * 1.25, frame, low ? 6 : 8, x, y, z), web));
-  for (const z of [-0.6, 0.6]) root.add(solidWeb(cbox(W - 0.1, 0.06, 0.12, frame, 0.025, 0, -H / 2 + 0.03, z), web));
+  for (const x of [-hx, hx]) for (const y of [-hy, hy]) for (const z of [-hz, hz]) root.add(solidWeb(ball(r * 1.25, frame, low ? 6 : 8, x, y, z), web, true));
+  for (const z of [-0.6, 0.6]) root.add(solidWeb(cbox(W - 0.1, 0.06, 0.12, frame, 0.025, 0, -H / 2 + 0.03, z), web, true));
 
   // ---- wire mesh at the bar centrelines: four sides, the bottom, and the top around the door
   const sides: [THREE.PlaneGeometry, number, number, number, number, number][] = [
@@ -148,7 +155,7 @@ export function makePot(): PotView {
     root.add(m);
   }
 
-  // ---- entrance tunnels: orange webbing funnels on two opposite sides (clear of the catch)
+  // ---- entrance tunnels: webbing funnels on two opposite sides (clear of the catch)
   const tunY = -0.05;
   for (const s of [-1, 1]) {
     const len = 0.5;
@@ -179,6 +186,7 @@ export function makePot(): PotView {
   // gameplay rotates it about z)
   const door = new THREE.Group();
   door.name = 'dyn:door';
+  door.userData.shadowDetail = true; // thin rods: left out of small shadow maps (Stage)
   {
     const ds = 2 * dh + 0.04; // overlaps the opening a little so no gap shows
     const rr = 0.02;
@@ -196,16 +204,16 @@ export function makePot(): PotView {
   door.position.set(-dh - 0.02, hy + 0.022, 0);
   root.add(door);
 
-  // ---- bait: a jar hung from the top centre and a webbing bait bag beside it (shown when baited)
+  // ---- bait: a small tub hung from the top centre and a webbing bait bag beside it (shown when
+  // baited)
   const bait = new THREE.Group();
   bait.name = 'dyn:bait';
   {
-    const jar = new THREE.Group();
-    jar.add(tube(0.09, 0.09, 0.2, K.glass(), 10, 0, 0, 0));
-    jar.add(pal(tube(0.095, 0.095, 0.04, frame, 10, 0, 0.12, 0), C.red));
-    jar.add(pal(tube(0.075, 0.075, 0.13, frame, 8, 0, -0.03, 0), 0x9c7a5a));
-    bait.add(jar);
-    bait.add(bar(0, 0.14, 0, 0, H / 2 - 0.1 - 0.1, 0, 0.008, K.manila(), 4));
+    const tub = new THREE.Group();
+    tub.add(pal(tube(0.075, 0.065, 0.11, frame, 10, 0, 0, 0), 0x9c7a5a));
+    tub.add(pal(tube(0.08, 0.08, 0.025, frame, 10, 0, 0.062, 0), 0x7d6046));
+    bait.add(tub);
+    bait.add(bar(0, 0.075, 0, 0, H / 2 - 0.1 - 0.1, 0, 0.008, K.manila(), 4));
     const bag = ball(0.11, web, 10, 0.24, 0.0, 0.05);
     bag.scale.set(1, 1.3, 1);
     bait.add(bag);

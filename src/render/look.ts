@@ -1,14 +1,15 @@
 /**
  * Art direction in one place: the "golden hour toy diorama" look and its storm counterpart.
  *
- * Calm water is a late-afternoon golden hour: a low warm sun about 60 degrees right of the view
- * and still ahead of it, so it side-rakes the boat (warm wheelhouse, rails and crew, shadows
- * running across the frame) and the sun path glitters in the upper right; a weak neutral-cool
- * fill from behind the camera; a slate-teal sky that keeps the sea's reflection teal rather than
- * royal blue; warm peach haze over the far third of the frame; warm highlights and teal shadows
- * in the grade, a warm-brown vignette, and a tilt-shift blur that makes the boat read as a
- * miniature. The storm pulls everything toward cold slate: high diffuse light, low contrast, a
- * close grey spray haze over grey-green water, white foam, desaturated grade.
+ * Calm water is a late-afternoon golden hour: a low warm sun about 26 degrees right of the view,
+ * ahead of the camera and behind the boat, so the boat is rim-lit, its shadows run toward the
+ * lower left and the sun path glitters across the upper right; a weak neutral-cool fill from
+ * behind the camera; a slate-teal sky that keeps the sea's reflection teal rather than royal
+ * blue; deep, desaturated teal water; a warm haze over the far sea; a contrasty grade with warm
+ * highlights and teal shadows, a warm-brown vignette, and a tilt-shift blur that makes the boat
+ * read as a miniature. The storm pulls everything toward cold slate: high diffuse light, a strong
+ * cool rim on the boat, a close grey spray haze over grey-green water with dark troughs and
+ * lighter crests, white foam, a cooler, less saturated grade.
  *
  * Stage, sea, post-processing and the end-of-trip scenes all read from `computeLook()`; nothing
  * else should hard-code scene colours.
@@ -76,19 +77,19 @@ const c = (hex: number) => new THREE.Color(hex);
 
 /** The two poles the weather blends between. Values are in linear working space via THREE.Color. */
 const GOLDEN = {
-  // low enough for long warm shadows and a rim, high enough that the wheelhouse shadow
-  // doesn't swallow the working deck
-  sunElevDeg: 24,
-  /** sun azimuth relative to the overhead view yaw: about 63 degrees right of the view, still
-   * ahead, so it side-rakes the boat (warm wheelhouse front, rails and crew; shadows run across
-   * the frame) and the glitter lands in the upper right of the frame */
-  sunAzOffset: -1.1,
+  // low for long warm shadows and a rim, high enough that the wheelhouse shadow doesn't swallow
+  // the working deck
+  sunElevDeg: 20,
+  /** sun azimuth relative to the overhead view yaw: about 26 degrees right of the view, ahead of
+   * the camera and behind the boat, so the glitter path crosses the upper right of the frame (as
+   * in the reference), the boat is rim-lit and its shadows run toward the lower left */
+  sunAzOffset: -0.45,
   sunColor: c(0xffb36b),
   sunIntensity: 4.3,
   sunDisc: 0.04,
   // a weak, nearly neutral cool fill from behind the camera: the warm key does the modelling
   rimColor: c(0xaec2d6),
-  rimIntensity: 0.35,
+  rimIntensity: 0.5,
   hemiSky: c(0xb7c5d0),
   hemiGround: c(0x5a3a26),
   hemiIntensity: 0.75,
@@ -96,39 +97,41 @@ const GOLDEN = {
   skyZenith: c(0x4a6e82),
   skyHorizon: c(0xf3b886),
   skyGlow: c(0xffcf8f),
-  // the top third of the overhead frame hazes warm peach, like the reference
-  fogColor: c(0xc9977a),
+  // the far sea hazes warm toward the sun (the sea and sky tint it slate teal away from it)
+  fogColor: c(0xb38f78),
   fogNear: 40,
   fogFar: 115,
-  // first person: fully fogged before the 100 m edge of the sea grid
-  fpFogNear: 26,
+  // first person: fully fogged before the 100 m edge of the sea grid, clear water nearer
+  fpFogNear: 45,
   fpFogFar: 92,
-  exposure: 1.16,
-  sea: { deep: c(0x082331), mid: c(0x1d4f5c), subsurface: c(0x33a39a), foam: c(0xfff3e2), glitter: 1.0, roughness: 0.16, reflect: 0.85 },
+  exposure: 1.02,
+  sea: { deep: c(0x061d24), mid: c(0x173f45), subsurface: c(0x33a39a), foam: c(0xfff3e2), glitter: 1.6, roughness: 0.2, reflect: 0.7 },
   grade: {
     shadowTint: c(0x0d4152),
     highlightTint: c(0xffd2a0),
-    saturation: 1.05,
-    contrast: 1.12,
-    vignette: 0.32,
+    saturation: 0.95,
+    contrast: 1.25,
+    vignette: 0.5,
     vignetteTint: c(0x2a1c14),
     grain: 0.035,
     bloomStrength: 0.4,
-    bloomThreshold: 0.95,
+    bloomThreshold: 0.85,
     bloomRadius: 0.5,
     tiltShift: 1.0,
-    tiltBelow: 0.55,
+    tiltBelow: 0.8,
   },
 };
 
 const STORM = {
   sunElevDeg: 38,
-  sunAzOffset: -0.8,
+  // the same bearing as golden hour, so the sun doesn't swing across the sky as the weather blends
+  sunAzOffset: -0.45,
   sunColor: c(0xc3cbd8),
   sunIntensity: 1.5,
   sunDisc: 0.0,
   rimColor: c(0x8ea4c4),
-  rimIntensity: 0.45,
+  // a strong cool rim so the hull's outline holds against the grey sea
+  rimIntensity: 0.9,
   hemiSky: c(0x9aa6b8),
   hemiGround: c(0x1f262e),
   hemiIntensity: 1.7,
@@ -141,13 +144,14 @@ const STORM = {
   fogFar: 75,
   fpFogNear: 12,
   fpFogFar: 62,
-  exposure: 1.15,
-  sea: { deep: c(0x13222b), mid: c(0x2a4250), subsurface: c(0x4d7c7a), foam: c(0xeef3f4), glitter: 0.12, roughness: 0.4, reflect: 0.6 },
+  exposure: 1.05,
+  // darker troughs, lighter crests: the swell's form reads through the spray haze
+  sea: { deep: c(0x0e1c24), mid: c(0x2e4c58), subsurface: c(0x4d7c7a), foam: c(0xeef3f4), glitter: 0.12, roughness: 0.4, reflect: 0.6 },
   grade: {
     shadowTint: c(0x18212c),
     highlightTint: c(0xdfe8f2),
-    saturation: 0.82,
-    contrast: 1.04,
+    saturation: 0.9,
+    contrast: 1.12,
     vignette: 0.4,
     vignetteTint: c(0x1a1f24),
     grain: 0.05,

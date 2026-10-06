@@ -21,6 +21,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { config } from '../config';
 import { plastic, metal } from './materials';
+import { MARKER_LAYER, OVERLAY_LAYER } from '../render/overlay';
 
 const P = config.palette;
 
@@ -846,6 +847,9 @@ function bandRows(y: number, h: number, lift: number): [number, number, number][
 
 export function makeCrew(look: CrewLook): CrewView {
   const root = new THREE.Group();
+  // the figure draws after the boat and the player's see-through ring (a later render group)
+  root.renderOrder = 2;
+  root.userData.keepShadow = true; // every part casts, even on small shadow maps (Stage)
   root.name = look.name;
   const body = new THREE.Group();
   root.add(body);
@@ -1074,11 +1078,13 @@ export function makeCrew(look: CrewLook): CrewView {
   hat.position.copy(hatRest);
   body.add(hat);
 
-  // --- soft ring under the feet, with a soft contact shadow
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.34, 0.5, 32),
-    new THREE.MeshBasicMaterial({ color: look.isPlayer ? P.slicker : 0xffffff, transparent: true, opacity: look.isPlayer ? 0.75 : 0.35, depthWrite: false }),
-  );
+  // --- ring under the feet, with a soft contact shadow. The player's is a bold slicker-yellow
+  // ring on a dark under-ring (reads on pale wood and dark water alike) that pulses gently, plus a
+  // faint copy that ignores depth so the half hidden by the bulwark still shows. Bots get a faint
+  // white one. Rings and blobs live on MARKER_LAYER: the game camera draws them, the photo camera
+  // (layer 0 only) leaves them out.
+  const ringMat = (color: number, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+  const ring = new THREE.Mesh(look.isPlayer ? new THREE.RingGeometry(0.3, 0.58, 40) : new THREE.RingGeometry(0.34, 0.5, 32), ringMat(look.isPlayer ? P.slicker : 0xffffff, look.isPlayer ? 0.95 : 0.22));
   ring.rotation.x = -Math.PI / 2;
   ring.renderOrder = 2;
   const blob = new THREE.Mesh(
@@ -1086,6 +1092,48 @@ export function makeCrew(look: CrewLook): CrewView {
     new THREE.MeshBasicMaterial({ color: 0x000000, alphaMap: blobTexture(), transparent: true, opacity: 0.32, depthWrite: false }),
   );
   ring.add(blob);
+  if (look.isPlayer) {
+    const under = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.62, 40), ringMat(0x1a1208, 0.5));
+    under.position.z = -0.002;
+    under.renderOrder = 1;
+    // The see-through copy is drawn with the opaque pass (blended by hand, always passing the
+    // depth test), after the boat but before the crew (whose root draws in a later group, below),
+    // so it shows through the rail and the gear but never over the player's own legs.
+    const xrayMat = new THREE.MeshBasicMaterial({ color: P.slicker, opacity: 0.45, transparent: false, depthWrite: false, depthFunc: THREE.AlwaysDepth });
+    xrayMat.blending = THREE.CustomBlending;
+    xrayMat.blendSrc = THREE.SrcAlphaFactor;
+    xrayMat.blendDst = THREE.OneMinusSrcAlphaFactor;
+    xrayMat.userData.ringFeather = true; // keep it out of the transparent pass (render/overlay.ts)
+    const xray = new THREE.Mesh(ring.geometry, xrayMat);
+    xray.renderOrder = 3;
+    ring.add(under, xray);
+    // 1.0 → 1.08 at 1.2 Hz (the owner positions the ring every frame; the pulse only scales it)
+    ring.onBeforeRender = () => {
+      const s = 1.04 - 0.04 * Math.cos(performance.now() * 0.001 * Math.PI * 2 * 1.2);
+      if (Math.abs(ring.scale.x - s) < 1e-4) return;
+      ring.scale.setScalar(s);
+      ring.updateMatrixWorld();
+    };
+  }
+  ring.traverse((o) => o.layers.set(MARKER_LAYER));
+
+  // phones: a chevron over the player's head, 2.1 m above the deck at a constant 20 px, drawn
+  // over everything (overlay layer: crisp, never in photos)
+  if (look.isPlayer && COARSE) {
+    const chev = new THREE.Sprite(new THREE.SpriteMaterial({ map: chevronTexture(), depthTest: false, depthWrite: false, transparent: true, sizeAttenuation: false }));
+    chev.position.y = 2.1 - 0.85; // the root is the capsule centre, ~0.85 m over the deck
+    chev.renderOrder = 24;
+    chev.layers.set(OVERLAY_LAYER);
+    const _sz = new THREE.Vector2();
+    chev.onBeforeRender = (r, _s, cam) => {
+      const p11 = (cam as THREE.PerspectiveCamera).projectionMatrix.elements[5];
+      const h = (2 * 20 * r.getPixelRatio()) / (p11 * Math.max(1, r.getDrawingBufferSize(_sz).y));
+      if (Math.abs(chev.scale.y - h) < 1e-5) return;
+      chev.scale.set(h, h, 1);
+      chev.updateMatrixWorld();
+    };
+    root.add(chev);
+  }
 
   const bubble = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), plastic(P.buoy));
   bubble.visible = false;
@@ -1135,6 +1183,32 @@ export function makeCrew(look: CrewLook): CrewView {
   return view;
 }
 
+let chevTex: THREE.Texture | null = null;
+/** A down-pointing slicker-yellow chevron with a dark rim (the phone's "that's you" marker). */
+function chevronTexture(): THREE.Texture {
+  if (chevTex) return chevTex;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 64;
+  const g = cv.getContext('2d')!;
+  g.lineJoin = 'round';
+  g.beginPath();
+  g.moveTo(8, 14);
+  g.lineTo(32, 30);
+  g.lineTo(56, 14);
+  g.lineTo(56, 30);
+  g.lineTo(32, 52);
+  g.lineTo(8, 30);
+  g.closePath();
+  g.lineWidth = 8;
+  g.strokeStyle = '#1a1208';
+  g.stroke();
+  g.fillStyle = '#' + new THREE.Color(P.slicker).getHexString(THREE.SRGBColorSpace);
+  g.fill();
+  chevTex = new THREE.CanvasTexture(cv);
+  chevTex.colorSpace = THREE.SRGBColorSpace;
+  return chevTex;
+}
+
 let blobTex: THREE.Texture | null = null;
 /** Radial falloff for the contact shadow under a figure (alpha map, linear). */
 function blobTexture(): THREE.Texture {
@@ -1153,13 +1227,13 @@ function blobTexture(): THREE.Texture {
 }
 
 /**
- * The four crew looks for the demo. Each slicker yellow is pushed apart (the player's classic
- * yellow, Dot's warm marigold, Ike's pale lemon, Mo's orange) and the bib colour, which also
- * colours the yoke, hood and collar lining, identifies everyone from above even without a hat.
+ * The four crew looks for the demo. The player is the only one in slicker yellow (Mo wears
+ * orange, Dot teal, Ike a pale oilskin cream), and the bib colour, which also colours the yoke,
+ * hood and collar lining, identifies everyone from above even without a hat.
  */
 export const CREW_LOOKS: Record<'player' | 'mo' | 'dot' | 'ike', CrewLook> = {
   player: { name: 'You', slicker: P.slicker, bibs: 0xe0662c, skin: 0xf1c7a5, hatStyle: 'beanie', hatColor: 0xc8432f, hair: 0x6b4630, mitts: 0x3c6e8f, brow: 0, isPlayer: true },
   mo: { name: 'Mo', slicker: 0xe56a2a, bibs: 0x2b3a56, skin: 0xe3b493, hatStyle: 'cap', hatColor: 0x23314a, beard: 0xe8e6e1, mitts: 0xb5372c, build: 'stocky', brow: 0.2 },
-  dot: { name: 'Dot', slicker: 0xf0b429, bibs: 0x2a8c88, skin: 0xa8714f, hatStyle: 'bobble', hatColor: 0x2c8c8c, hair: 0x2a1d16, mitts: 0xe9e1cf, braid: true, brow: -0.1 },
-  ike: { name: 'Ike', slicker: 0xf7e06a, bibs: 0x5a7d34, skin: 0xf6d2b8, hatStyle: 'bucket', hatColor: 0x4f8a3a, hair: 0xd0782f, mitts: 0xe2762e, build: 'lanky', freckles: true, brow: -0.3 },
+  dot: { name: 'Dot', slicker: 0x3c9c9a, bibs: 0x2a8c88, skin: 0xa8714f, hatStyle: 'bobble', hatColor: 0x2c8c8c, hair: 0x2a1d16, mitts: 0xe9e1cf, braid: true, brow: -0.1 },
+  ike: { name: 'Ike', slicker: 0xdcd6c2, bibs: 0x5a7d34, skin: 0xf6d2b8, hatStyle: 'bucket', hatColor: 0x4f8a3a, hair: 0xd0782f, mitts: 0xe2762e, build: 'lanky', freckles: true, brow: -0.3 },
 };

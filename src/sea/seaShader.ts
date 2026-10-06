@@ -8,13 +8,13 @@
  *   - Fresnel reflection of an analytic sky (zenith / horizon / sun glow from the look)
  *   - GGX sun highlight on baked detail ripples (2–3 mip-filtered samples of one tiling slope
  *     map), tinted gold and capped, plus twinkling glints kept inside the sun lobe: the
- *     glittering sun path. Detail ripples only reach diffuse and Fresnel at 0.35 strength.
+ *     glittering sun path. Detail ripples reach the diffuse and the reflection at 0.8 strength.
  *   - subsurface glow in thin bands just under sharp, back-lit crests
  *   - foam: crisp, broken whitecaps on the sharpest crests, thin wind-stretched streaks behind
  *     them, sparse storm streaks along the wind (kept clear of buoys and the hull), a lit and
- *     broken rogue lip with churned water behind it, a lacy hull collar that is wider at the
- *     bow and stern, and a wake that follows the stern's recent path: broken prop wash in the
- *     first few metres, thin Kelvin arms, a darker churned centreline
+ *     broken rogue lip with churned water behind it, a lacy hull collar that is widest at the
+ *     bow (a little wider at the stern), and a wake that follows the stern's recent path: broken
+ *     prop wash in the first few metres, thin Kelvin arms, a darker churned centreline
  *   - contact darkening around the hull and the hull's shadow; horizon haze into the fog colour
  *
  * Defines (set by SeaMesh per quality tier):
@@ -177,11 +177,16 @@ float hullDist(vec3 lp, float hwy) {
   return max(abs(lp.x) - hwy, 0.0);
 }
 
-vec3 skyColor(vec3 R) {
+// The sky as the water sees it. The warm horizon only on the sun's side (away from it the horizon
+// is nearly the zenith's slate teal), and the broad glow broken up by brk (0..1 noise), so swell
+// faces tilted toward the sun don't reflect smooth cream smears.
+vec3 skyColor(vec3 R, float brk) {
   float h = clamp(R.y, 0.0, 1.0);
-  vec3 c = mix(uSkyHorizon, uSkyZenith, smoothstep(0.0, 0.5, pow(h, 0.8)));
+  float sunSide = 0.5 + 0.5 * dot(normalize(R.xz + 1e-4), normalize(uSunDirection.xz + 1e-4));
+  vec3 hor = mix(mix(uSkyHorizon, uSkyZenith, 0.92), uSkyHorizon, smoothstep(0.35, 1.0, sunSide));
+  vec3 c = mix(hor, uSkyZenith, smoothstep(0.0, 0.5, pow(h, 0.8)));
   float sd = max(dot(R, uSunDirection), 0.0);
-  c += uSkyGlow * (pow(sd, 5.0) * 0.35 + pow(sd, 40.0) * 0.6);
+  c += uSkyGlow * (pow(sd, 5.0) * 0.35 * mix(0.35, 1.0, smoothstep(0.45, 0.75, brk)) + pow(sd, 40.0) * 0.6);
   return c;
 }
 
@@ -230,11 +235,11 @@ void main() {
   vec3 L = uSunDirection;
   vec3 Nm = normalize(vNormal);
   // shading normals: the swell's slope exaggerated so its form reads from overhead (diffuse,
-  // Fresnel), detail ripples at 0.35 there and at full strength only for the sun's highlight
+  // Fresnel), detail ripples at 0.8 there and at full strength only for the sun's highlight
   float gF = uSeaLight.y;
   vec3 Nmac = normalize(vec3(Nm.x * gF, Nm.y, Nm.z * gF));
   vec3 dN = vec3(-slope.x, 0.0, -slope.y);
-  vec3 Nd = normalize(Nmac + dN * 0.35);
+  vec3 Nd = normalize(Nmac + dN * 0.8);
   // (the sun sees steeper ripples than the diffuse does: real capillary slopes reach 15-20 deg,
   // which spreads the highlight into a glittering path of facets)
   vec3 Ns = normalize(Nm + dN * 1.9);
@@ -259,11 +264,15 @@ void main() {
   float sssA = min(0.35, thin * backlit * 1.6) * (0.4 + 0.6 * uSeaLight.x);
 
   // ---------------------------------------------------------------- sky reflection
+  // (the reflection sees the true swell plus most of the ripples: the sky breaks up into facets
+  // instead of mirroring in big smooth patches; capped so the far sea never turns to milk)
   float F = 0.02 + 0.98 * pow(1.0 - NdV, 5.0);
-  vec3 R = reflect(-V, Nd);
+  vec3 R = reflect(-V, normalize(Nm + dN * 0.8));
   R.y = max(R.y, 0.02);
-  vec3 refl = skyColor(normalize(R));
-  float reflAmt = clamp(F * 1.7 + 0.03, 0.0, 1.0) * uSeaParams.z;
+  // break-up noise in undisplaced coordinates (reused by the foam below)
+  float nB = vnoise(mat2(0.8, 0.6, -0.6, 0.8) * gp * 3.3 + vec2(t * 0.1, -t * 0.12));
+  vec3 refl = skyColor(normalize(R), nB);
+  float reflAmt = clamp(F * 1.3 + 0.03, 0.0, 0.55) * uSeaParams.z;
 
   // ---------------------------------------------------------------- sun: GGX + glints
   vec3 H = normalize(L + V);
@@ -305,7 +314,7 @@ void main() {
   vec3 glitter = uSpecTint * min(glint * sunAmt * 1.4, 3.0);
 
   // ---------------------------------------------------------------- foam
-  float thr = mix(0.86, 0.64, rough);
+  float thr = mix(0.76, 0.60, rough);
   // whitecaps spill down the front (downwind) face of the crest: a thin band, not a blob
   float freshC = smoothstep(thr, 1.0, pn) * smoothstep(0.01, 0.09, dot(Nm.xz, wd));
   float trailC = smoothstep(thr - 0.03, 1.0, vFoam.y / uSeaState.y) * (1.0 - freshC);
@@ -316,11 +325,10 @@ void main() {
   float foam = 0.0;
   float aer = 0.0;     // aerated water: lighter, a little greener
   float churn = 0.0;   // churned water behind the stern: a little darker
-  float nA = 0.5, nB = 0.5;
+  float nA = 0.5;
   if (freshC > 0.0 || trailC > 0.0 || rogueOn || streaky || inWake || nearHull) {
     // break-up noise in undisplaced (Lagrangian) coordinates, so foam rides the orbital motion
     nA = vnoise(wp2 * vec2(1.9, 0.55) + vec2(-t * 0.25, 0.0));   // stretched along the crests
-    nB = vnoise(mat2(0.8, 0.6, -0.6, 0.8) * gp * 3.3 + vec2(t * 0.1, -t * 0.12));
   }
   float pat = nA * 0.55 + nB * 0.45;
 
@@ -334,16 +342,16 @@ void main() {
   }
 
   // whitecaps: crisp, broken patches on the sharpest crests
-  if (freshC > 0.0) foam = foamLayer(freshC * 0.8, pat) * (0.4 + 0.6 * clearMask);
+  if (freshC > 0.0) foam = foamLayer(freshC * 0.95, pat) * (0.4 + 0.6 * clearMask);
   // the crest's wake: thin, broken streaks stretched along the wind (no filaments, no blobs)
   if (trailC > 0.0) {
     float st = vnoise(wp2 * vec2(0.22, 2.4) + vec2(-t * 0.22, 7.0));
     float streak = smoothstep(0.6, 0.72, st * 0.75 + nB * 0.25);
     foam = max(foam, streak * smoothstep(0.0, 0.6, trailC) * 0.38 * clearMask);
   }
-  // storm streaks along the wind: long and thin (~8:1), sparse, clustered in patches
+  // storm streaks along the wind: long and thin (~20:1), faint, sparse, clustered in patches
   if (streaky) {
-    float s1 = vnoise(wp2 * vec2(0.32, 3.2) + vec2(-t * 0.35, 0.0));
+    float s1 = vnoise(wp2 * vec2(0.25, 5.0) + vec2(-t * 0.35, 0.0));
 #if SEA_DETAIL >= 2
     float s2 = vnoise(wp2 * vec2(0.7, 6.0) + vec2(-t * 0.5, 13.0));
     float sn = s1 * 0.75 + s2 * 0.25;
@@ -353,8 +361,8 @@ void main() {
     float line = smoothstep(0.71, 0.75, sn);
     // broken along its length, clustered in patches
     float brk = smoothstep(0.35, 0.6, vnoise(wp2 * vec2(0.35, 0.9) + vec2(-t * 0.3, 41.0)));
-    float clump = smoothstep(0.42, 0.78, vnoise(wp2 * vec2(0.025, 0.07) + 5.0));
-    foam = max(foam, line * brk * clump * smoothstep(0.35, 0.9, rough) * 0.42 * clearMask);
+    float clump = smoothstep(0.55, 0.85, vnoise(wp2 * vec2(0.025, 0.07) + 5.0));
+    foam = max(foam, line * brk * clump * smoothstep(0.35, 0.9, rough) * 0.26 * clearMask);
   }
 
   // ---------------------------------------------------------------- the rogue
@@ -432,17 +440,20 @@ void main() {
   }
 
   // ---------------------------------------------------------------- hull contact
-  // a lacy collar at the waterline (thin midships, wider at the bow and stern) and a bow wave
-  // peeling off with speed
+  // a lacy collar at the waterline (thin midships, widest at the bow, a little wider at the
+  // stern) and a bow wave peeling off with speed
   float contact = 0.0;
   if (nearHull) {
     float bowF = smoothstep(3.0, uBow, lp.z);
     float sternF = 1.0 - smoothstep(uStern, uStern + 3.0, lp.z);
-    float cw = 0.15 + 0.5 * max(bowF, sternF) + 0.12 * bowF * speedF + 0.2 * min(abs(uBoatHeave.x), 1.0) + 0.12 * rough;
-    cw *= 0.45 + 1.1 * vnoise(vec2(lp.z * 0.45 + t * 0.12, sign(lp.x) * 7.0));   // laps unevenly along the hull
+    // (thin at the stern: the wake takes over behind the transom)
+    float cw = 0.12 + 0.55 * bowF + 0.25 * sternF + 0.12 * bowF * speedF + 0.2 * min(abs(uBoatHeave.x), 1.0) + 0.12 * rough;
+    cw *= 0.3 + 1.3 * vnoise(vec2(lp.z * 0.45 + t * 0.12, sign(lp.x) * 7.0));   // laps unevenly along the hull
     float e = hullD;
-    float l1 = vnoise(vec2(lp.z * 2.6 + t * (0.45 + speedF * 1.6), e * 6.0 - t * 0.8));
-    float l2 = vnoise(mat2(0.8, 0.6, -0.6, 0.8) * vec2(lp.z * 6.1 - t * 0.7, e * 9.0 + t * 0.6) + 31.0);
+    // lace sampled in the boat's plan (not along the distance to the hull, which would draw
+    // contour bands parallel to the transom)
+    float l1 = vnoise(lp.xz * 2.6 + vec2(0.0, t * (0.45 + speedF * 1.6)));
+    float l2 = vnoise(mat2(0.8, 0.6, -0.6, 0.8) * lp.xz * 6.1 + vec2(t * 0.6, -t * 0.7) + 31.0);
     float lace = l1 * 0.6 + l2 * 0.4;
     float cov = 1.0 - smoothstep(cw * 0.35, cw, e);
     float collar = cov * aastep(0.55 - 0.12 * (1.0 - smoothstep(0.0, cw * 0.5, e)), lace);
@@ -469,10 +480,10 @@ void main() {
         float inside = hullHalf(q.z) - abs(q.x);
         float zin = smoothstep(uStern - 0.2, uStern + 0.4, q.z) * (1.0 - smoothstep(uBow - 0.6, uBow, q.z));
         if (k > 0) { inside = min(inside, 2.4 - abs(q.x)); zin *= smoothstep(-0.2, 0.3, q.z - 2.9) * (1.0 - smoothstep(-0.3, 0.2, q.z - 8.0)); }
-        shadow = max(shadow, smoothstep(-0.25, 0.35, inside) * zin);
+        shadow = max(shadow, smoothstep(-0.6, 0.6, inside) * zin);
       }
     }
-    shadow *= 0.85 * (1.0 - uSeaState.w * 0.6);
+    shadow *= 0.4 * (1.0 - uSeaState.w * 0.6);
   }
   spec *= 1.0 - shadow;
   glitter *= 1.0 - shadow;
@@ -497,11 +508,15 @@ void main() {
     #else
       float haze = smoothstep(fogNear, fogFar, vFogDepth);
     #endif
-    col = mix(col, uHaze, haze);
+    // the haze keeps the fog's warmth only toward the sun; away from it the far sea goes slate teal
+    float toSun = smoothstep(0.1, 0.95, 0.5 + 0.5 * dot(normalize(-V.xz + 1e-4), normalize(L.xz + 1e-4)));
+    col = mix(col, mix(uHaze * vec3(0.42, 0.62, 0.72), uHaze, toSun), haze);
   #endif
 
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
+  // ±0.5/255 dither: no banding in the dark water and the haze on Low (8 bits straight out)
+  gl_FragColor.rgb += (hash12(gl_FragCoord.xy) - 0.5) / 255.0;
 }
 `;

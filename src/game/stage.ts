@@ -18,18 +18,22 @@ import { clamp, damp, lerp } from '../core/math';
 import { cloneLook, computeLook, type Look } from '../render/look';
 import { SkyDome, SkyEnv, makeSkyUniforms, skyFromLook } from '../render/sky';
 import { Post, type PostView } from '../render/post';
-import { featherRing } from '../render/overlay';
+import { featherRing, MARKER_LAYER, OVERLAY_LAYER } from '../render/overlay';
 import { BOW_Z, HALF_BEAM, STERN_Z } from '../boat/layout';
 
 export type Quality = 'low' | 'medium' | 'high';
 
-/** Layer for screen-space-ish helpers that must stay crisp and ungraded (drawn after post). */
-export const OVERLAY_LAYER = 7;
+export { OVERLAY_LAYER };
 
 /** Boat-local bounds of everything that receives the sun's shadow (hull, deck, crew, house). */
 const BOAT_MIN = new THREE.Vector3(-HALF_BEAM - 0.35, -1.4, STERN_Z - 0.4);
 const BOAT_MAX = new THREE.Vector3(HALF_BEAM + 0.35, 3.6, BOW_Z + 0.4);
 const CORNERS = Array.from({ length: 8 }, (_, i) => new THREE.Vector3(i & 1 ? BOAT_MAX.x : BOAT_MIN.x, i & 2 ? BOAT_MAX.y : BOAT_MIN.y, i & 4 ? BOAT_MAX.z : BOAT_MIN.z));
+
+/** Shadow maps this size or smaller (Medium, Low) leave out the small casters (see cullCaster). */
+const SMALL_SHADOW_MAP = 1024;
+/** bounding-sphere radius (m) under which a caster drops out of a small shadow map */
+const SMALL_CASTER_R = 0.2;
 
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -77,6 +81,8 @@ export class Stage {
   private overlays: THREE.Object3D[] = [];
   private lastT = performance.now() / 1000;
   private afterRender: (() => void)[] = [];
+  private beforeRender: (() => void)[] = [];
+  private pendingCompile: (() => void) | null = null;
   private view: PostView = { focusY: 0.5, focusHalf: 0.2, tilt: 1, time: 0 };
   /** smoothed frame time (ms), for the phone tilt-shift skip */
   private frameMs = 0;
@@ -87,9 +93,10 @@ export class Stage {
   constructor(container: HTMLElement) {
     this.isPhone = matchMedia('(pointer: coarse)').matches;
     this.quality = this.isPhone ? 'low' : 'high';
-    // the scene's MSAA happens in the HDR target on Medium/High; the canvas keeps desktop MSAA for
-    // the overlay pass (aim arc, rings) and for desktops that drop to Low. Phones: none.
-    this.renderer = new THREE.WebGLRenderer({ antialias: !this.isPhone, powerPreference: 'high-performance', preserveDrawingBuffer: false, stencil: false });
+    // Desktop: the scene's MSAA happens in the 4x HDR target (High/Medium), so the canvas needs
+    // none. Phones start on Low, which renders straight to the canvas: MSAA there is cheap on
+    // tile-based GPUs (resolved on chip) and stops the hull, rails and pot frames stair-stepping.
+    this.renderer = new THREE.WebGLRenderer({ antialias: this.isPhone || !config.quality.high.post, alpha: false, powerPreference: 'high-performance', preserveDrawingBuffer: false, stencil: false });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping; // Low renders straight to the canvas
     this.renderer.toneMappingExposure = 1;
@@ -102,6 +109,7 @@ export class Stage {
 
     this.camera = new THREE.PerspectiveCamera(config.camera.overhead.fov, 1, 0.3, 600);
     this.camera.layers.enable(OVERLAY_LAYER);
+    this.camera.layers.enable(MARKER_LAYER);
     this.look = cloneLook(computeLook(0, 0));
     this.envLook = cloneLook(this.look);
 
@@ -153,7 +161,10 @@ export class Stage {
     this.quality = q;
     const qc = config.quality[q];
     const cap = this.isPhone ? config.render.maxPixelRatioPhone : config.render.maxPixelRatioDesktop;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap, qc.pixelRatio));
+    const dpr = window.devicePixelRatio || 1;
+    // Low renders above 1x only on dense (DPR >= 2) screens, where 1x looks soft
+    const pr = q === 'low' && dpr < 2 ? 1 : qc.pixelRatio;
+    this.renderer.setPixelRatio(Math.min(dpr, cap, pr));
     const shadowsChanged = this.renderer.shadowMap.enabled !== qc.shadows;
     this.renderer.shadowMap.enabled = qc.shadows;
     this.sun.castShadow = qc.shadows;
@@ -167,9 +178,12 @@ export class Stage {
     this.sun.shadow.radius = config.render.shadowRadius * (sz / 2048) + 1;
     this.sun.shadow.bias = -0.0004;
     this.sun.shadow.normalBias = sz >= 2048 ? 0.025 : 0.04;
-    this.post.configure({ enabled: qc.post, msaa: this.isPhone ? 0 : qc.msaa, bloom: qc.bloom, tilt: qc.tilt });
+    // phones: no MSAA on the HDR target (bandwidth) unless the GPU resolves it on chip
+    const phoneMsaa = this.renderer.extensions.has('EXT_multisampled_render_to_texture') ? 2 : 0;
+    this.post.configure({ enabled: qc.post, msaa: this.isPhone ? Math.min(phoneMsaa, qc.msaa) : qc.msaa, bloom: qc.bloom, tilt: qc.tilt });
     this.tiltSkipped = false;
     this.slowSec = 0;
+    this.overlayScan = 0; // re-sort the shadow casters for the new map size on the next frame
     this.seaMesh.setSegments(qc.seaSegments);
     // materials need recompiling when shadows toggle
     if (shadowsChanged)
@@ -205,6 +219,8 @@ export class Stage {
     if (boatQuat) this.boatQuat.copy(boatQuat);
     this.hasBoat = true;
     const look = computeLook(storm, this.viewYaw, this.look);
+    // first person looks along the water at the sun: only the glints and the sun bloom
+    look.grade.bloomThreshold = lerp(look.grade.bloomThreshold, Math.max(1.2, look.grade.bloomThreshold), this.fpMode);
 
     // lights
     const amb = 1 - this.fpMode * 0.15;
@@ -243,9 +259,38 @@ export class Stage {
     this.renderer.toneMappingExposure = look.exposure;
   }
 
+  /**
+   * Compile every material in the scene, hidden ones included (snow, spray, ice, the deck wash),
+   * so the storm's first frames don't stall on shader compiles. Call once the scene is built: it
+   * runs right after the next frame, when the environment map, fog and shadows are in place (the
+   * programs depend on them), and resolves when the GPU has them ready.
+   */
+  precompile(): Promise<void> {
+    return new Promise((resolve) => {
+      this.pendingCompile = () => {
+        // programs differ by output (canvas: tone mapped sRGB; the HDR target: linear), so
+        // compile against the target the scene really renders into
+        const r = this.renderer;
+        const prev = r.getRenderTarget();
+        r.setRenderTarget(this.post.sceneTarget);
+        const ready = r.compileAsync(this.scene, this.camera);
+        r.setRenderTarget(prev);
+        ready.then(
+          () => resolve(),
+          () => resolve(),
+        );
+      };
+    });
+  }
+
   /** Called after each sea frame is rendered (photo captures hook in here). */
   onAfterRender(fn: () => void): void {
     this.afterRender.push(fn);
+  }
+
+  /** Called at the start of each sea frame, once the camera is placed (in-world markers). */
+  onBeforeRender(fn: () => void): void {
+    this.beforeRender.push(fn);
   }
 
   render(): void {
@@ -255,6 +300,7 @@ export class Stage {
     const dt = Math.min(0.1, now - this.lastT);
     this.lastT = now;
     this.watchFrameTime(dt);
+    for (const fn of this.beforeRender) fn();
     this.skyDome.uniforms.uSkyTime.value = now;
     this.updateEnv(dt);
     this.sky.position.copy(this.camera.position);
@@ -286,12 +332,18 @@ export class Stage {
         r.autoClear = ac;
       }
       this.camera.layers.set(0);
+      this.camera.layers.enable(MARKER_LAYER);
       this.camera.layers.enable(OVERLAY_LAYER);
     } else {
       r.setRenderTarget(null);
       r.render(this.scene, this.camera);
     }
     for (const fn of this.afterRender) fn();
+    if (this.pendingCompile) {
+      const fn = this.pendingCompile;
+      this.pendingCompile = null;
+      fn();
+    }
   }
 
   /**
@@ -419,10 +471,11 @@ export class Stage {
         y1 = Math.max(y1, y);
       }
       if (ok) {
-        // shrink a touch (the box corners overshoot the hull), then grow to cover anyone in the water
-        // and reach below the hull so the waterline foam and the wake stay sharp
+        // shrink (the box corners overshoot the hull, and a narrow band reads as a miniature: the
+        // bow and the top of the mast go slightly soft), then grow to cover anyone in the water and
+        // reach just below the hull so the waterline foam stays sharp
         const c0 = (y0 + y1) * 0.5,
-          h0 = (y1 - y0) * 0.5 * 0.92;
+          h0 = (y1 - y0) * 0.5 * 0.82;
         y0 = c0 - h0 - config.render.tiltBandBelow;
         y1 = c0 + h0;
         for (const p of this.focusPoints) {
@@ -462,13 +515,16 @@ export class Stage {
   }
 
   /**
-   * UI helpers (depth test off, unlit) go on the overlay layer so post leaves them crisp. Flat UI
-   * rings (crew selection rings, aim reticle/landing/highlight) get alpha-feathered edges.
+   * Scene scan (twice a second). UI helpers (depth test off, unlit) go on the overlay layer so
+   * post leaves them crisp. Flat UI rings (crew selection rings, aim reticle/landing/highlight)
+   * get alpha-feathered edges. Small shadow maps drop the small casters.
    */
   private markOverlays(): void {
     this.overlays.length = 0;
+    const cull = this.renderer.shadowMap.enabled && this.sun.shadow.mapSize.x <= SMALL_SHADOW_MAP;
     this.scene.traverse((o) => {
       const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+      if ((o as THREE.Mesh).isMesh) this.cullCaster(o as THREE.Mesh, cull);
       if ((o as THREE.Mesh).isMesh && (o as THREE.Mesh).geometry?.type === 'RingGeometry') featherRing(o as THREE.Mesh);
       if (!m || Array.isArray(m) || m.depthTest !== false) return;
       const unlit = (m as THREE.MeshBasicMaterial).isMeshBasicMaterial || (m as THREE.LineBasicMaterial).isLineBasicMaterial || (m as THREE.SpriteMaterial).isSpriteMaterial || (m as THREE.PointsMaterial).isPointsMaterial;
@@ -476,5 +532,35 @@ export class Stage {
       if (o.layers.mask !== 1 << OVERLAY_LAYER) o.layers.set(OVERLAY_LAYER);
       this.overlays.push(o);
     });
+  }
+
+  /**
+   * On a small shadow map, small casters (ropes, rails, jars, cleats, buckets: bounding sphere under
+   * SMALL_CASTER_R) and fine detail (objects under a `userData.shadowDetail` group, like the pot
+   * doors' thin rods) stop casting: each costs a draw call in the shadow pass for a shadow a few
+   * texels wide. The crew (`userData.keepShadow`) always cast. Decided once per mesh; undone when
+   * the map grows again.
+   */
+  private cullCaster(o: THREE.Mesh, cull: boolean): void {
+    const ud = o.userData;
+    if (!cull) {
+      if (ud.shadowCulled) o.castShadow = true;
+      delete ud.shadowCulled;
+      return;
+    }
+    if (ud.shadowCulled !== undefined || !o.castShadow) return;
+    let detail = false;
+    for (let a: THREE.Object3D | null = o; a; a = a.parent) {
+      if (a.userData.keepShadow) {
+        ud.shadowCulled = false;
+        return;
+      }
+      if (a.userData.shadowDetail) detail = true;
+    }
+    const g = o.geometry;
+    if (!g.boundingSphere) g.computeBoundingSphere();
+    const r = (g.boundingSphere?.radius ?? 1) * o.matrixWorld.getMaxScaleOnAxis();
+    ud.shadowCulled = detail || r < SMALL_CASTER_R;
+    if (ud.shadowCulled) o.castShadow = false;
   }
 }

@@ -4,8 +4,9 @@
  *
  * Flakes are soft, slightly out-of-focus discs that tumble as they fall. In wind they stretch
  * into short motion streaks along their screen-space velocity, so a storm reads as driven snow.
- * Near flakes are larger and softer (like a lens close to the miniature), far ones crisp, and
- * all of them fade out at the edges of the wrap box so it never pops. Lit by the shared sea light.
+ * Nearer flakes are larger and softer, far ones crisp; none grows past 6 px (times the pixel
+ * ratio), flakes within 6 m of the camera fade out, and all of them fade at the edges of the wrap
+ * box so it never pops. Lit by the shared sea light.
  */
 import * as THREE from 'three';
 import { seaLight } from '../sea/seaLook';
@@ -18,6 +19,7 @@ uniform float uBox;
 uniform float uScale;
 uniform float uAmount;
 uniform vec2 uViewport;
+uniform float uMaxPx; // 6 px at the drawing buffer's pixel ratio
 attribute float aSeed;
 varying float vAlpha;
 varying vec3 vStretch;
@@ -61,7 +63,9 @@ void main() {
   vSoft = smoothstep(14.0, 3.0, depth);
   size *= 1.0 + vSoft * 1.5;
   vAlpha *= 1.0 - vSoft * 0.55;
-  gl_PointSize = max(2.0, size * el);
+  // no white blobs: flakes closer than 6 m fade out, and none grows past a few pixels
+  vAlpha *= smoothstep(2.0, 6.0, depth);
+  gl_PointSize = clamp(size * el, 2.0, max(2.0, uMaxPx));
   gl_Position = c1;
 }`;
 
@@ -106,6 +110,7 @@ export class Snow {
         uScale: { value: 300 },
         uAmount: { value: 0 },
         uViewport: { value: new THREE.Vector2(1280, 720) },
+        uMaxPx: { value: 6 },
         uLight: { value: new THREE.Color(0.95, 0.97, 1.0) },
       },
       vertexShader: VERT,
@@ -149,6 +154,7 @@ export class Snow {
     u.uBox.value = boxOverride ?? (fp > 0.5 ? 26 : this.box);
     // pixelScale is the drawing-buffer height in pixels
     (u.uViewport.value as THREE.Vector2).set(pixelScale * (window.innerWidth / Math.max(1, window.innerHeight)), pixelScale);
+    u.uMaxPx.value = 6 * Math.max(1, pixelScale / Math.max(1, window.innerHeight));
     // flakes take the colour of the light: cool white, a little warmth from the sun
     const s = seaLight.sun,
       a = seaLight.ambient;
