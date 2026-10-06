@@ -1,12 +1,16 @@
 /**
  * Rendered sea: a 200 × 200 m grid that follows the boat, denser near the centre,
  * displaced on the GPU with exactly the CPU wave function (SEA_GLSL ↔ Sea.displace).
+ * Shading lives in seaShader.ts; colours come from the art-direction look (applyLook).
  */
 import * as THREE from 'three';
 import type { Look } from '../render/look';
+import { computeLook, goldenLook } from '../render/look';
 import { config } from '../config';
-import { SEA_GLSL, type Sea, type SeaUniforms } from './waves';
+import type { Sea, SeaUniforms } from './waves';
 import { HALF_BEAM, STERN_Z, BOW_Z } from '../boat/layout';
+import { SEA_VERT, SEA_FRAG } from './seaShader';
+import { seaLight, setSeaLight } from './seaLook';
 
 function makeGrid(segments: number, size: number): THREE.BufferGeometry {
   const n = segments + 1;
@@ -52,123 +56,54 @@ function makeGrid(segments: number, size: number): THREE.BufferGeometry {
   return g;
 }
 
-const VERT = /* glsl */ `
-${SEA_GLSL}
-uniform vec3 uFocus;
-varying vec3 vWorld;
-varying vec3 vNormal;
-varying float vPinch;
-varying float vRogue;
-varying float vHeight;
-#include <fog_pars_vertex>
-void main() {
-  vec4 wp = modelMatrix * vec4(position, 1.0);
-  float dist = length(wp.xz - uFocus.xz);
-  float distFade = 1.0 - smoothstep(38.0, 75.0, dist);
-  vec3 n; float pinch; float rc;
-  vec3 d = seaDisplace(wp.xz, distFade, n, pinch, rc);
-  wp.xyz += d;
-  vWorld = wp.xyz;
-  vNormal = n;
-  vPinch = pinch;
-  vRogue = rc;
-  vHeight = d.y;
-  vec4 mvPosition = viewMatrix * wp;
-  gl_Position = projectionMatrix * mvPosition;
-  #include <fog_vertex>
+/** Shader detail per tier: 1 low, 2 medium, 3 high. */
+export type SeaDetail = 1 | 2 | 3;
+const detailForSegments = (segments: number): SeaDetail => (segments <= 110 ? 1 : segments <= 180 ? 2 : 3);
+
+/** Stern history for the wake (points, seconds between samples, foam lifetime). */
+const WAKE_N = 12;
+const WAKE_N_LOW = 7;
+const WAKE_DT = 0.85;
+const WAKE_TAU = 9;
+
+// swell range of the weather director (calm … storm), for whitecap coverage
+const SWELL_CALM = config.weather.phases.calm.swell;
+const SWELL_STORM = config.weather.phases.storm.swell;
+
+const _m = new THREE.Matrix4();
+const _v = new THREE.Vector3();
+
+interface WakePoint {
+  x: number;
+  z: number;
+  t: number;
+  w: number;
 }
-`;
-
-const FRAG = /* glsl */ `
-uniform vec3 uDeep;
-uniform vec3 uShallow;
-uniform vec3 uFoam;
-uniform vec3 uSky;
-uniform vec3 uSunDir;
-uniform float uSun;
-uniform float uFoamSlope;
-uniform float uTime2;
-uniform mat4 uBoatInv;
-uniform float uBoatSpeed;
-uniform float uHalfBeam;
-uniform float uStern;
-uniform float uBow;
-uniform float uStorm;
-varying vec3 vWorld;
-varying vec3 vNormal;
-varying float vPinch;
-varying float vRogue;
-varying float vHeight;
-#include <fog_pars_fragment>
-
-float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float vnoise(vec2 p) {
-  vec2 i = floor(p); vec2 f = fract(p);
-  vec2 u = f * f * (3.0 - 2.0 * f);
-  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
-}
-float hullHalf(float z) {
-  if (z <= uStern) return 2.85;
-  if (z < uStern + 1.5) return mix(2.85, uHalfBeam, sin((z - uStern) / 1.5 * 1.5708));
-  if (z <= 4.0) return uHalfBeam;
-  if (z >= uBow) return 0.0;
-  float t = (z - 4.0) / (uBow - 4.0);
-  return uHalfBeam * pow(max(0.0, 1.0 - t * t), 0.6);
-}
-
-void main() {
-  // Hide the sea inside the hull footprint (the deck-wash sheet handles green water on deck).
-  vec3 lp = (uBoatInv * vec4(vWorld, 1.0)).xyz;
-  float hw = hullHalf(lp.z);
-  float edge = abs(lp.x) - hw;
-  if (lp.z > uStern + 0.05 && lp.z < uBow - 0.05 && edge < -0.06 && lp.y < 0.6) discard;
-
-  vec3 N = normalize(vNormal);
-  vec3 V = normalize(cameraPosition - vWorld);
-  float ndl = dot(N, uSunDir) * 0.5 + 0.5;
-  float band = floor(ndl * 4.0) / 4.0;
-  ndl = mix(ndl, band, 0.45); // a touch of toon banding
-  float fres = pow(1.0 - max(dot(N, V), 0.0), 4.0);
-
-  vec3 base = mix(uDeep, uShallow, smoothstep(-1.2, 1.4, vHeight));
-  base *= 0.62 + 0.5 * ndl;
-  base = mix(base, uSky, fres * 0.6);
-  // crest translucency
-  base += vec3(0.05, 0.16, 0.14) * smoothstep(0.3, 1.6, vHeight) * (1.0 - uStorm * 0.5);
-
-  // foam: horizontal pinch (Jacobian) + rogue crest + wake around the hull
-  float n1 = vnoise(vWorld.xz * 0.55 + vec2(uTime2 * 0.25, -uTime2 * 0.17));
-  float n2 = vnoise(vWorld.xz * 1.6 - vec2(uTime2 * 0.4, uTime2 * 0.1));
-  float foamN = n1 * 0.65 + n2 * 0.35;
-  float foam = smoothstep(uFoamSlope, uFoamSlope + 0.45, vPinch + foamN * 0.25);
-  foam += vRogue * smoothstep(0.2, 0.7, foamN + 0.2);
-  float inHullRange = step(uStern, lp.z) * step(lp.z, uBow + 0.8);
-  float wakeBand = smoothstep(1.1, 0.0, edge) * step(-0.1, edge) * inHullRange;
-  float speedF = clamp(uBoatSpeed / 3.0, 0.1, 1.0);
-  foam += wakeBand * smoothstep(0.3, 0.8, foamN) * (0.35 + 0.65 * speedF) * 0.8;
-  if (lp.z < uStern) {
-    float back = uStern - lp.z;
-    float vlane = abs(abs(lp.x) - back * 0.3 - 1.4);
-    foam += smoothstep(1.2, 0.0, vlane) * smoothstep(36.0, 3.0, back) * smoothstep(0.35, 0.85, foamN) * speedF * 0.7;
-    foam += smoothstep(2.0, 0.0, abs(lp.x)) * smoothstep(16.0, 0.0, back) * smoothstep(0.4, 0.85, n1) * speedF * 0.6;
-  }
-  foam = clamp(foam, 0.0, 1.0);
-
-  float spec = pow(max(dot(reflect(-uSunDir, N), V), 0.0), 90.0) * uSun;
-  vec3 col = mix(base, uFoam, foam * 0.9) + spec * vec3(1.0, 0.95, 0.85);
-  gl_FragColor = vec4(col, 1.0);
-  #include <tonemapping_fragment>
-  #include <colorspace_fragment>
-  #include <fog_fragment>
-}
-`;
 
 export class SeaMesh {
   readonly mesh: THREE.Mesh;
   readonly material: THREE.ShaderMaterial;
   readonly uniforms: SeaUniforms;
+  private detail: SeaDetail;
+  private wake: WakePoint[] = [];
+  private lastSample = -1;
+  private lastTime = -1;
+  private lastBoatY = 0;
+  private heaveRate = 0;
+  /** renders since the last applyLook(); the sea looks after itself if nobody drives it */
+  private rendersSinceLook = 0;
+  private ownLook = goldenLook();
 
   constructor(segments: number) {
+    const look = goldenLook();
+    // default wind (setWind() overrides): along the two biggest swells, amplitude-weighted
+    const [w0, w1] = config.sea.waves;
+    const a0 = (w0.dirDeg * Math.PI) / 180,
+      a1 = (w1.dirDeg * Math.PI) / 180;
+    const wx = Math.cos(a0) * w0.amp + Math.cos(a1) * w1.amp,
+      wz = Math.sin(a0) * w0.amp + Math.sin(a1) * w1.amp;
+    const wl = Math.hypot(wx, wz) || 1;
+    const wind = new THREE.Vector3(wx / wl, wz / wl, 0.2);
     const u: SeaUniforms = {
       uTime: { value: 0 },
       uTime2: { value: 0 },
@@ -178,59 +113,201 @@ export class SeaMesh {
       uRogueB: { value: new THREE.Vector4() },
       uFarFade: { value: 1 },
       uFocus: { value: new THREE.Vector3() },
-      uDeep: { value: new THREE.Color(config.sea.colorDeep) },
-      uShallow: { value: new THREE.Color(config.sea.colorShallow) },
-      uFoam: { value: new THREE.Color(config.sea.colorFoam) },
-      uSky: { value: new THREE.Color(config.palette.morningSky) },
-      uSunDir: { value: new THREE.Vector3(0.4, 0.7, 0.3).normalize() },
-      uSun: { value: 0.8 },
-      uFoamSlope: { value: config.sea.foamSlope },
       uBoatInv: { value: new THREE.Matrix4() },
       uBoatSpeed: { value: 0 },
+      uBoatHeave: { value: new THREE.Vector2() },
       uHalfBeam: { value: HALF_BEAM },
       uStern: { value: STERN_Z },
       uBow: { value: BOW_Z },
+      // look-driven (applyLook)
+      uSunDirection: { value: look.sunDir.clone() },
+      uSunColor: { value: new THREE.Color() },
+      uAmbient: { value: new THREE.Color() },
+      uSkyZenith: { value: look.skyZenith.clone() },
+      uSkyHorizon: { value: look.skyHorizon.clone() },
+      uSkyGlow: { value: look.skyGlow.clone() },
+      uHaze: { value: look.fogColor.clone() },
+      uSeaDeep: { value: look.sea.deep.clone() },
+      uSeaMid: { value: look.sea.mid.clone() },
+      uSeaSub: { value: look.sea.subsurface.clone() },
+      uSeaFoam: { value: look.sea.foam.clone() },
+      uSeaParams: { value: new THREE.Vector4() },
+      uSeaState: { value: new THREE.Vector4(0, 0.1, 1, 0) },
+      uWind: { value: wind },
+      uWake: { value: Array.from({ length: WAKE_N }, () => new THREE.Vector4()) },
+      uWakeBox: { value: new THREE.Vector4(0, 0, 0, 0) },
+      // legacy slots: older Stage code writes these directly; the shader no longer reads them
+      uDeep: { value: new THREE.Color() },
+      uShallow: { value: new THREE.Color() },
+      uFoam: { value: new THREE.Color() },
+      uSky: { value: new THREE.Color() },
+      uSunDir: { value: new THREE.Vector3(0, 1, 0) },
+      uSun: { value: 0 },
       uStorm: { value: 0 },
+      uFoamSlope: { value: config.sea.foamSlope },
       ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
     };
     this.uniforms = u;
+    this.detail = detailForSegments(segments);
     this.material = new THREE.ShaderMaterial({
       uniforms: u as unknown as Record<string, THREE.IUniform>,
-      vertexShader: VERT,
-      fragmentShader: FRAG,
+      vertexShader: SEA_VERT,
+      fragmentShader: SEA_FRAG,
       fog: true,
+      defines: this.defines(),
     });
     this.mesh = new THREE.Mesh(makeGrid(segments, config.sea.meshSize), this.material);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = -1;
+    this.applyLook(look);
+    this.rendersSinceLook = 2;
+    // Fallback for hosts that never call applyLook(): derive the look from the legacy storm
+    // uniform and the camera's heading, so the sea still follows the weather.
+    this.mesh.onBeforeRender = (_r, _s, camera) => {
+      if (++this.rendersSinceLook <= 2) return;
+      camera.getWorldDirection(_v);
+      const storm = (this.uniforms.uStorm as { value: number }).value;
+      this.applyLook(computeLook(storm, Math.atan2(_v.x, _v.z), this.ownLook));
+      this.rendersSinceLook = 3;
+    };
+  }
+
+  private defines(): Record<string, number> {
+    return { SEA_DETAIL: this.detail, WAKE_N: this.detail === 1 ? WAKE_N_LOW : WAKE_N };
   }
 
   /**
    * Colour the sea from the art-direction look (src/render/look.ts). Stage calls this every
-   * frame with the current look; the sea shader owns how each value is used.
+   * frame with the current look; the sea shader owns how each value is used. Also refreshes the
+   * shared light that spray, ripples and snow are lit by (seaLook.ts).
    */
   applyLook(look: Look): void {
     const u = this.uniforms;
-    (u.uDeep.value as THREE.Color).copy(look.sea.deep);
-    (u.uShallow.value as THREE.Color).copy(look.sea.mid);
-    (u.uFoam.value as THREE.Color).copy(look.sea.foam);
-    (u.uSky.value as THREE.Color).copy(look.skyHorizon).lerp(look.skyZenith, 0.35);
-    (u.uSunDir.value as THREE.Vector3).copy(look.sunDir);
-    (u.uSun as { value: number }).value = look.sea.glitter;
+    this.rendersSinceLook = 0;
+    setSeaLight(look);
+    (u.uSunDirection.value as THREE.Vector3).copy(look.sunDir);
+    (u.uSunColor.value as THREE.Color).copy(seaLight.sun);
+    (u.uAmbient.value as THREE.Color).copy(seaLight.ambient);
+    (u.uSkyZenith.value as THREE.Color).copy(look.skyZenith);
+    (u.uSkyHorizon.value as THREE.Color).copy(look.skyHorizon);
+    (u.uSkyGlow.value as THREE.Color).copy(look.skyGlow);
+    (u.uHaze.value as THREE.Color).copy(look.fogColor);
+    (u.uSeaDeep.value as THREE.Color).copy(look.sea.deep);
+    (u.uSeaMid.value as THREE.Color).copy(look.sea.mid);
+    (u.uSeaSub.value as THREE.Color).copy(look.sea.subsurface);
+    (u.uSeaFoam.value as THREE.Color).copy(look.sea.foam);
+    (u.uSeaParams.value as THREE.Vector4).set(look.sea.glitter, look.sea.roughness, look.sea.reflect, look.sunDisc);
+    (u.uSeaState.value as THREE.Vector4).w = seaLight.storm;
+  }
+
+  /** Wind for the storm streaks and detail drift (world XZ direction, strength 0..1). Optional. */
+  setWind(dir: THREE.Vector2, strength: number): void {
+    const l = Math.hypot(dir.x, dir.y) || 1;
+    (this.uniforms.uWind.value as THREE.Vector3).set(dir.x / l, dir.y / l, strength);
+  }
+
+  /** Shader detail tier (1 low … 3 high). setSegments() picks it from the grid size. */
+  setDetail(detail: SeaDetail): void {
+    if (detail === this.detail) return;
+    this.detail = detail;
+    this.material.defines = this.defines();
+    this.material.needsUpdate = true;
   }
 
   setSegments(segments: number): void {
     this.mesh.geometry.dispose();
     this.mesh.geometry = makeGrid(segments, config.sea.meshSize);
+    this.setDetail(detailForSegments(segments));
   }
 
   update(sea: Sea, renderTime: number, focus: THREE.Vector3, boatMatrixInv: THREE.Matrix4, boatSpeed: number): void {
-    sea.writeUniforms(this.uniforms, renderTime);
-    (this.uniforms.uTime2 as { value: number }).value = renderTime;
-    (this.uniforms.uFocus.value as THREE.Vector3).copy(focus);
-    (this.uniforms.uBoatInv.value as THREE.Matrix4).copy(boatMatrixInv);
-    (this.uniforms.uBoatSpeed as { value: number }).value = Math.abs(boatSpeed);
+    const u = this.uniforms;
+    sea.writeUniforms(u, renderTime);
+    (u.uTime2 as { value: number }).value = renderTime;
+    (u.uFocus.value as THREE.Vector3).copy(focus);
+    (u.uBoatInv.value as THREE.Matrix4).copy(boatMatrixInv);
+    const speed = Math.max(0, boatSpeed);
+    (u.uBoatSpeed as { value: number }).value = speed;
+
+    // sea state: whitecap coverage from the swell, max pinch to normalise the crest foam
+    let maxPinch = 0,
+      crestH = 0;
+    for (const w of sea.waves) {
+      maxPinch += w.k * w.amp * sea.swell * w.steep;
+      crestH += w.amp * sea.swell;
+    }
+    const st = u.uSeaState.value as THREE.Vector4;
+    st.x = THREE.MathUtils.clamp((sea.swell - SWELL_CALM) / (SWELL_STORM - SWELL_CALM), 0, 1);
+    st.y = Math.max(0.02, maxPinch);
+    st.z = Math.max(0.3, crestH * 0.8);
+
+    // boat matrix → stern position, heave rate
+    _m.copy(boatMatrixInv).invert();
+    const stern = _v.set(0, 0, STERN_Z + 0.2).applyMatrix4(_m);
+    const dt = renderTime - this.lastTime;
+    const by = _m.elements[13];
+    if (this.lastTime >= 0 && dt > 1e-4 && dt < 0.5) {
+      const rate = (by - this.lastBoatY) / dt;
+      this.heaveRate += (rate - this.heaveRate) * Math.min(1, dt * 6);
+    }
+    this.lastBoatY = by;
+    (u.uBoatHeave.value as THREE.Vector2).set(this.heaveRate, 0);
+    this.updateWake(stern.x, stern.z, renderTime, speed);
+    this.lastTime = renderTime;
+
     // follow the boat, snapped to 1 m so the far grid does not swim
     this.mesh.position.set(Math.round(focus.x), 0, Math.round(focus.z));
+  }
+
+  /** Keep a short history of stern positions and pack it as the wake polyline. */
+  private updateWake(x: number, z: number, t: number, speed: number): void {
+    const n = this.detail === 1 ? WAKE_N_LOW : WAKE_N;
+    const dtSample = (WAKE_DT * (WAKE_N - 1)) / (n - 1);
+    const strength = THREE.MathUtils.clamp(speed / config.boat.speed.cruise, 0, 1.15);
+    const w = this.wake;
+    const last = w[0];
+    const jump = last ? Math.hypot(x - last.x, z - last.z) : 0;
+    if (w.length !== n - 1 || this.lastTime < 0 || t < this.lastTime - 0.01 || t - this.lastTime > 3 || jump > 30) {
+      // (re)start: a fresh history on the boat
+      w.length = 0;
+      for (let i = 0; i < n - 1; i++) w.push({ x, z, t: t - i * dtSample, w: 0 });
+      this.lastSample = t;
+    }
+    if (t - this.lastSample >= dtSample) {
+      w.pop();
+      w.unshift({ x, z, t, w: strength });
+      this.lastSample = t;
+    }
+    const arr = this.uniforms.uWake.value as THREE.Vector4[];
+    arr[0].set(x, z, 0, strength);
+    let px = x,
+      pz = z,
+      arc = 0;
+    for (let i = 0; i < n - 1; i++) {
+      const p = w[i];
+      arc += Math.hypot(p.x - px, p.z - pz);
+      px = p.x;
+      pz = p.z;
+      arr[i + 1].set(p.x, p.z, arc, p.w * Math.exp(-(t - p.t) / WAKE_TAU));
+    }
+    for (let i = n; i < arr.length; i++) arr[i].set(px, pz, arc, 0);
+    // bounds for the shader's early-out: the polyline grown by the widest arm reach
+    let minX = Infinity,
+      minZ = Infinity,
+      maxX = -Infinity,
+      maxZ = -Infinity,
+      wmax = 0;
+    for (let i = 0; i < n; i++) {
+      const p = arr[i];
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minZ = Math.min(minZ, p.y);
+      maxZ = Math.max(maxZ, p.y);
+      wmax = Math.max(wmax, p.w);
+    }
+    const reach = 4 + arc * 0.4;
+    const box = this.uniforms.uWakeBox.value as THREE.Vector4;
+    if (wmax < 0.002) box.set(0, 0, 0, 0);
+    else box.set(minX - reach, minZ - reach, maxX + reach, maxZ + reach);
   }
 }
