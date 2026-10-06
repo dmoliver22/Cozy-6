@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { later } from '../core/schedule';
 import { config } from '../config';
 import { ITEM_DEFS, type Item, type ItemManager } from '../deck/items';
-import { crabBodyGeometry, crabFlapGeometry, SPECIES_COLOR, type CrabSex } from '../art/crab';
+import { crabBodyGeometry, crabFlapGeometry, crabMaterial, crabFlapMaterial, SPECIES_COLOR, type CrabSex } from '../art/crab';
 import { L } from '../boat/layout';
 import type { Ctx } from '../game/ctx';
 import { events } from '../core/events';
@@ -47,12 +47,14 @@ export class CrabSystem {
 
   constructor(private ctx: Ctx) {
     this.rng = ctx.rng.stream('crabs');
-    const bodyMat = new THREE.MeshToonMaterial({ color: 0xffffff });
-    const flapMat = new THREE.MeshToonMaterial({ color: 0xf3e2c4 });
+    // glossy shells: the geometry's vertex shading multiplies each instance's species colour
+    const bodyMat = crabMaterial();
+    const flapMat = crabFlapMaterial();
     const make = (sex: CrabSex) => {
       const body = new THREE.InstancedMesh(crabBodyGeometry(sex), bodyMat, MAX);
       const flap = new THREE.InstancedMesh(crabFlapGeometry(sex), flapMat, MAX);
       body.castShadow = true;
+      body.receiveShadow = true;
       body.count = 0;
       flap.count = 0;
       body.frustumCulled = false;
