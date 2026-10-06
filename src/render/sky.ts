@@ -6,8 +6,8 @@
  *    scene.environment. It is regenerated only when the look changes noticeably (the caller
  *    throttles); the view yaw is applied with scene.environmentRotation instead of a rebuild.
  *
- * Golden hour: horizon haze → warm horizon → blue-teal zenith, a sun disc with a wide and a tight
- * glow, and a few soft cloud bands near the horizon lit from the sun side. Storm: overcast.
+ * Golden hour: horizon haze → warm horizon → slate-teal zenith, a crisp sun disc with a tight,
+ * capped halo, and a few soft cloud bands near the horizon lit from the sun side. Storm: overcast.
  */
 import * as THREE from 'three';
 import type { Look } from './look';
@@ -53,9 +53,12 @@ vec3 skyColor(vec3 dir) {
   vec3 horizon = mix(mix(uHorizon, uZenith, 0.45), uHorizon, smoothstep(0.0, 1.0, sunSide));
   float t = pow(clamp(e, 0.0, 1.0), 0.42);
   vec3 col = mix(horizon, uZenith, smoothstep(0.0, 0.78, t));
-  // sun glow: a broad warm band along the horizon toward the sun, a halo and a hot core
+  // sun glow: a broad warm band along the horizon toward the sun, then a tight, capped halo
+  // and core, so the sun reads as a crisp disc with a moderate glow (it never washes out the
+  // rigging in front of it, and bloom only picks up the core)
   float lowSky = 1.0 - smoothstep(0.0, 0.32, e);
-  col += uGlow * (pow(sunSide, 4.0) * lowSky * 0.35 + pow(sd, 6.0) * 0.16 + pow(sd, 64.0) * 0.55 + pow(sd, 700.0) * 2.5) * uSunAmt;
+  float halo = min(pow(sd, 12.0) * 0.14 + pow(sd, 128.0) * 0.45 + pow(sd, 1400.0) * 1.6, 2.2);
+  col += uGlow * (pow(sunSide, 4.0) * lowSky * 0.32 + halo) * uSunAmt;
   // horizon haze matches the fog so the sea melts into the sky
   col = mix(col, uHaze, (1.0 - smoothstep(-0.01, 0.09, e)) * 0.9);
 
@@ -133,7 +136,7 @@ export function makeSkyUniforms(): SkyUniforms {
     uSunCol: { value: new THREE.Color() },
     uSunDisc: { value: 0.04 },
     uSunAmt: { value: 1 },
-    uDiscGain: { value: 14 },
+    uDiscGain: { value: 7 },
     uCloud: { value: 1 },
     uOvercast: { value: 0 },
     uCloudLit: { value: new THREE.Color() },

@@ -97,8 +97,9 @@ export class Galley {
     // the "sky" here is the room itself, only for reflections: dark timber, amber lamplight
     skyFromLook(this.envSky, look, 0, { clouds: 0, ground: new THREE.Color(0x2a1a12) });
     // room: tongue-and-groove planking (box-projected, so the planks keep their size)
-    const wallMat = wood(0xb98a62, { plankWidth: 0.16, along: 'x', weathered: true, rough: 0.7 });
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), wood(0x8a5f40, { plankWidth: 0.2, along: 'x', weathered: true, rough: 0.6 }));
+    // (a greyer, weathered timber: the lamplight supplies the orange, so the yellow oilskins still pop)
+    const wallMat = wood(0xa48a72, { plankWidth: 0.16, along: 'x', weathered: true, rough: 0.7 });
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), wood(0x7e5c44, { plankWidth: 0.2, along: 'x', weathered: true, rough: 0.6 }));
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     sc.add(floor);
@@ -141,11 +142,12 @@ export class Galley {
     sc.add(this.stoveLight);
     // lantern over the table: a point light for the room and a soft spot that pools light on the
     // table and casts the crew's shadows (when the tier has shadows)
+    // (hung high, so the lantern itself sits just above the frame instead of behind the title)
     this.lantern = new THREE.PointLight(0xffd09a, 4.5, 8, 1.5);
-    this.lantern.position.set(0, 2.4, 0);
+    this.lantern.position.set(0, 2.62, 0);
     sc.add(this.lantern);
-    const pool = new THREE.SpotLight(0xffc98a, 6, 7, 1.05, 0.9, 1.4);
-    pool.position.set(0, 2.38, 0);
+    const pool = new THREE.SpotLight(0xffc98a, 6, 7, 1.0, 0.9, 1.4);
+    pool.position.set(0, 2.6, 0);
     pool.target.position.set(0, 0, 0);
     pool.castShadow = true;
     pool.shadow.mapSize.set(1024, 1024);
@@ -154,12 +156,15 @@ export class Galley {
     pool.shadow.radius = 4;
     pool.shadow.intensity = 0.7;
     sc.add(pool, pool.target);
-    // cool dusk light through the window
-    const winLight = new THREE.DirectionalLight(0x8fa8e0, 0.45);
-    winLight.position.set(0.6, 2.6, -6);
-    winLight.target.position.set(0, 0.8, 0.5);
+    // cool moonlight falling in through the window and across the room: it cools the floor, the
+    // table, the left wall and the crew's shoulders, so they separate from the lamplit timber by
+    // warm/cool contrast rather than only by the vignette
+    const winLight = new THREE.DirectionalLight(0x7f9bd6, 0.42);
+    winLight.position.set(2.4, 4.2, -5.2);
+    winLight.target.position.set(-0.8, 0.6, 1.2);
     sc.add(winLight, winLight.target);
-    sc.add(box(0.2, 0.28, 0.2, toonUnique(0xffe2a6, { emissive: 0xffb860 }), 0, 2.45, 0));
+    // the lantern body: a warm glow, not a blown white box behind the title
+    sc.add(box(0.2, 0.28, 0.2, toonUnique(0xc9a37a, { emissive: 0xffb860, emissiveIntensity: 0.4 }), 0, 2.8, 0));
     // table & bench
     sc.add(box(1.8, 0.08, 1.1, toon(P.wood), 0, 0.78, 0));
     sc.add(box(0.15, 0.78, 0.15, toon(0x6b4b35), 0, 0.39, 0));

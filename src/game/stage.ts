@@ -5,8 +5,10 @@
  *  - the procedural sky dome, and scene.environment as a PMREM of that sky, rebuilt only when the
  *    storm amount moves noticeably (the view yaw is applied with environmentRotation);
  *  - fog, exposure and the sea (SeaMesh.applyLook);
- *  - Medium/High: HDR target → tilt-shift (focus band on the boat) → bloom (High) → grade, then
- *    the UI overlays (aim arc, rings, pot numbers: anything with depthTest off) drawn crisp on top.
+ *  - Medium/High: HDR target → tilt-shift (focus band on the boat, reaching past the waterline)
+ *    → bloom (High) → grade, then the UI overlays (aim arc, rings, pot numbers: anything with
+ *    depthTest off) drawn crisp on top. Flat UI rings get feathered edges (no MSAA on phones).
+ *    Phones with a dense screen drop the tilt pass if frames run long.
  *  - Low: one straight render to the canvas with ACES tone mapping. No extra passes.
  */
 import * as THREE from 'three';
@@ -16,6 +18,7 @@ import { clamp, damp, lerp } from '../core/math';
 import { cloneLook, computeLook, type Look } from '../render/look';
 import { SkyDome, SkyEnv, makeSkyUniforms, skyFromLook } from '../render/sky';
 import { Post, type PostView } from '../render/post';
+import { featherRing } from '../render/overlay';
 import { BOW_Z, HALF_BEAM, STERN_Z } from '../boat/layout';
 
 export type Quality = 'low' | 'medium' | 'high';
@@ -75,6 +78,11 @@ export class Stage {
   private lastT = performance.now() / 1000;
   private afterRender: (() => void)[] = [];
   private view: PostView = { focusY: 0.5, focusHalf: 0.2, tilt: 1, time: 0 };
+  /** smoothed frame time (ms), for the phone tilt-shift skip */
+  private frameMs = 0;
+  private slowSec = 0;
+  /** phones: tilt-shift dropped for this tier because frames ran long (reset on a tier change) */
+  tiltSkipped = false;
 
   constructor(container: HTMLElement) {
     this.isPhone = matchMedia('(pointer: coarse)').matches;
@@ -124,6 +132,7 @@ export class Stage {
     this.env = new SkyEnv(this.renderer, this.isPhone ? 256 : 512);
     this.post = new Post(this.renderer);
     this.post.blurFrac = config.render.tiltBlur;
+    this.post.focusSoft = config.render.tiltSoft;
 
     this.seaMesh = new SeaMesh(config.quality[this.quality].seaSegments);
     this.scene.add(this.seaMesh.mesh);
@@ -159,6 +168,8 @@ export class Stage {
     this.sun.shadow.bias = -0.0004;
     this.sun.shadow.normalBias = sz >= 2048 ? 0.025 : 0.04;
     this.post.configure({ enabled: qc.post, msaa: this.isPhone ? 0 : qc.msaa, bloom: qc.bloom, tilt: qc.tilt });
+    this.tiltSkipped = false;
+    this.slowSec = 0;
     this.seaMesh.setSegments(qc.seaSegments);
     // materials need recompiling when shadows toggle
     if (shadowsChanged)
@@ -205,8 +216,10 @@ export class Stage {
     this.sun.shadow.intensity = lerp(0.82, 0.6, storm);
     this.rim.color.copy(look.rimColor);
     this.rim.intensity = look.rimIntensity;
-    // the rim/fill comes from behind the camera, opposite the sun: it lights what faces the player
-    const rimAz = Math.atan2(look.sunDir.x, look.sunDir.z) + Math.PI + 0.45;
+    // the cool fill comes from just behind the camera (a little to its right, the sun's side):
+    // it lifts what faces the player, the near hull side and the crew's faces, without competing
+    // with the warm side-raking key
+    const rimAz = this.viewYaw - 2.88;
     const rimEl = 0.62;
     _v.set(Math.sin(rimAz) * Math.cos(rimEl), Math.sin(rimEl), Math.cos(rimAz) * Math.cos(rimEl));
     this.rim.position.copy(focus).addScaledVector(_v, 40);
@@ -241,6 +254,7 @@ export class Stage {
     const now = performance.now() / 1000;
     const dt = Math.min(0.1, now - this.lastT);
     this.lastT = now;
+    this.watchFrameTime(dt);
     this.skyDome.uniforms.uSkyTime.value = now;
     this.updateEnv(dt);
     this.sky.position.copy(this.camera.position);
@@ -256,7 +270,7 @@ export class Stage {
       v.focusY = this.focusY;
       v.focusHalf = this.focusHalf;
       const fp = 1 - this.fpMode;
-      v.tilt = fp * fp;
+      v.tilt = this.tiltSkipped ? 0 : fp * fp;
       v.time = now;
       this.camera.layers.disable(OVERLAY_LAYER);
       this.post.render(this.scene, this.camera, this.look, v, null);
@@ -370,6 +384,19 @@ export class Stage {
     sc.updateProjectionMatrix();
   }
 
+  /**
+   * Phones with a dense screen (DPR >= 1.5) drop the tilt-shift pass, the biggest fixed cost after
+   * shadows, once frames have averaged over config.render.phoneTiltSkipMs for a couple of seconds.
+   * It stays off until the quality tier changes (auto quality re-evaluates from there).
+   */
+  private watchFrameTime(dt: number): void {
+    if (!this.isPhone || this.tiltSkipped || !this.post.active || !this.post.tier.tilt) return;
+    if ((window.devicePixelRatio || 1) < 1.5) return;
+    this.frameMs = lerp(this.frameMs || dt * 1000, dt * 1000, 0.05);
+    this.slowSec = this.frameMs > config.render.phoneTiltSkipMs ? this.slowSec + dt : 0;
+    if (this.slowSec > 2) this.tiltSkipped = true;
+  }
+
   /** The tilt-shift band: the boat's vertical extent on screen, eased. */
   private updateFocus(dt: number): void {
     let cy = 0.5,
@@ -393,9 +420,10 @@ export class Stage {
       }
       if (ok) {
         // shrink a touch (the box corners overshoot the hull), then grow to cover anyone in the water
+        // and reach below the hull so the waterline foam and the wake stay sharp
         const c0 = (y0 + y1) * 0.5,
           h0 = (y1 - y0) * 0.5 * 0.92;
-        y0 = c0 - h0;
+        y0 = c0 - h0 - config.render.tiltBandBelow;
         y1 = c0 + h0;
         for (const p of this.focusPoints) {
           _v.copy(p).applyMatrix4(this.camera.matrixWorldInverse);
@@ -433,11 +461,15 @@ export class Stage {
     this.envAge = 0;
   }
 
-  /** UI helpers (depth test off, unlit) go on the overlay layer so post leaves them crisp. */
+  /**
+   * UI helpers (depth test off, unlit) go on the overlay layer so post leaves them crisp. Flat UI
+   * rings (crew selection rings, aim reticle/landing/highlight) get alpha-feathered edges.
+   */
   private markOverlays(): void {
     this.overlays.length = 0;
     this.scene.traverse((o) => {
       const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+      if ((o as THREE.Mesh).isMesh && (o as THREE.Mesh).geometry?.type === 'RingGeometry') featherRing(o as THREE.Mesh);
       if (!m || Array.isArray(m) || m.depthTest !== false) return;
       const unlit = (m as THREE.MeshBasicMaterial).isMeshBasicMaterial || (m as THREE.LineBasicMaterial).isLineBasicMaterial || (m as THREE.SpriteMaterial).isSpriteMaterial || (m as THREE.PointsMaterial).isPointsMaterial;
       if (!unlit) return;

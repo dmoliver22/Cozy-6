@@ -3,11 +3,15 @@
  *
  *   scene → HDR target (HalfFloat, MSAA on High)
  *         → tilt-shift: separable 13-tap gaussian at half resolution, radius scaled per pixel by
- *           the distance from a horizontal focus band (centred on the boat)
+ *           the distance from a horizontal focus band (centred on the boat, reaching down past
+ *           the waterline). Taps are weighted up by how far they exceed 1.0 in luma, so sun
+ *           glints open into small bright bokeh discs instead of averaging into grey smears.
+ *           Full strength above the band (the far sea), weaker below it (the near water).
  *         → bloom (High): soft-threshold prefilter + 13-tap mip chain down to 1/32, tent upsample
  *           added back level by level (the "mip bloom" of CoD:AW / Unity URP)
- *         → composite: tilt mix, bloom, exposure, ACES filmic, split-tone grade (teal shadows,
- *           warm highlights), saturation, contrast, vignette, grain, sRGB encode
+ *         → composite: tilt mix, bloom, exposure, ACES filmic, split-tone grade (luma-weighted
+ *           teal shadows with a blue→teal hue push, warm highlights), saturation, contrast, a
+ *           warm-brown vignette, grain, sRGB encode
  *
  * The composite writes sRGB-encoded values itself, so the same pass can target the canvas or an
  * 8-bit render target (photos). Every target is sized from the drawing buffer, so resizes and
@@ -45,24 +49,38 @@ uniform float uFocusY;
 uniform float uFocusHalf;
 uniform float uFocusSoft;
 uniform float uTilt;
+uniform float uBelow; // strength below the band (near water) relative to above it (far sea)
 float tiltMask(float y) {
-  float m = clamp((abs(y - uFocusY) - uFocusHalf) / uFocusSoft, 0.0, 1.0);
-  return m * m * (3.0 - 2.0 * m) * uTilt;
+  float d = y - uFocusY;
+  float m = clamp((abs(d) - uFocusHalf) / uFocusSoft, 0.0, 1.0);
+  return m * m * (3.0 - 2.0 * m) * uTilt * (d < 0.0 ? uBelow : 1.0);
 }`;
 
-/** Separable gaussian (13 taps folded into 7 bilinear fetches); radius grows away from the band. */
+/**
+ * Separable gaussian (13 taps folded into 7 bilinear fetches); radius grows away from the band.
+ * Each tap is weighted by 1 + 3·max(0, luma − 1) (normalised), so HDR glints keep their punch
+ * and spread into small bokeh discs rather than being averaged down into milky grey.
+ */
 const TILT_FRAG = /* glsl */ `
 uniform sampler2D tIn;
 uniform vec2 uStep; // the full blur radius along the pass direction, in uv
 ${MASK}
 varying vec2 vUv;
+vec3 acc; float wsum;
+void tap(vec2 uv, float g) {
+  vec3 t = min(texture2D(tIn, uv).rgb, vec3(16.0));
+  float w = g * (1.0 + 3.0 * min(max(dot(t, vec3(0.2126, 0.7152, 0.0722)) - 1.0, 0.0), 3.0));
+  acc += t * w;
+  wsum += w;
+}
 void main() {
   vec2 s = uStep * tiltMask(vUv.y) / 5.176470588;
-  vec3 c = texture2D(tIn, vUv).rgb * 0.1964825501511404;
-  c += (texture2D(tIn, vUv + s * 1.411764706).rgb + texture2D(tIn, vUv - s * 1.411764706).rgb) * 0.2969069646728344;
-  c += (texture2D(tIn, vUv + s * 3.294117647).rgb + texture2D(tIn, vUv - s * 3.294117647).rgb) * 0.09447039785044732;
-  c += (texture2D(tIn, vUv + s * 5.176470588).rgb + texture2D(tIn, vUv - s * 5.176470588).rgb) * 0.010381362401148057;
-  gl_FragColor = vec4(c, 1.0);
+  acc = vec3(0.0); wsum = 0.0;
+  tap(vUv, 0.1964825501511404);
+  tap(vUv + s * 1.411764706, 0.2969069646728344); tap(vUv - s * 1.411764706, 0.2969069646728344);
+  tap(vUv + s * 3.294117647, 0.09447039785044732); tap(vUv - s * 3.294117647, 0.09447039785044732);
+  tap(vUv + s * 5.176470588, 0.010381362401148057); tap(vUv - s * 5.176470588, 0.010381362401148057);
+  gl_FragColor = vec4(acc / wsum, 1.0);
 }`;
 
 const DOWN13 = /* glsl */ `
@@ -92,7 +110,7 @@ uniform float uThreshold;
 uniform float uKnee;
 varying vec2 vUv;
 void main() {
-  vec3 c = min(down13(vUv), vec3(24.0)); // tame single-pixel glints so they sparkle, not flash
+  vec3 c = min(down13(vUv), vec3(10.0)); // tame single-pixel glints and the sun disc so they sparkle, not flash
   float br = max(c.r, max(c.g, c.b));
   float rq = clamp(br - uThreshold + uKnee, 0.0, 2.0 * uKnee);
   rq = rq * rq / (4.0 * uKnee + 1e-4);
@@ -132,7 +150,7 @@ uniform vec3 uLift;
 uniform float uSat;
 uniform float uContrast;
 uniform float uVignette;
-uniform vec3 uVignetteCol;
+uniform vec3 uVignetteCol; // display sRGB
 uniform float uGrain;
 uniform float uTime;
 uniform vec2 uRes;
@@ -170,11 +188,14 @@ void main() {
   if (uUseBloom > 0.5) c += texture2D(tBloom, vUv).rgb * uBloom;
   c = acesFilmic(c * uExposure);
 
-  // split tone in display-linear: cool teal into the shadows, warm into the highlights
+  // split tone in display-linear: teal into the shadows (weighted by how dark the pixel is, and
+  // with a small hue push that turns saturated blues teal), warm into the highlights
   float l = luma(c);
-  float sh = (1.0 - smoothstep(0.0, 0.45, l));
+  float sh = 1.0 - smoothstep(0.0, 0.5, l);
+  sh *= sh;
   float hi = smoothstep(0.35, 1.0, l);
-  c = mix(c, c * uShadowTint, sh * 0.16) + uLift * sh;
+  c.g += max(c.b - c.g, 0.0) * 0.22 * sh;
+  c = mix(c, c * uShadowTint, sh * 0.25) + uLift * sh;
   c = mix(c, c * uHighlightTint, hi * 0.35);
   l = luma(c);
   c = max(mix(vec3(l), c, uSat), 0.0);
@@ -184,10 +205,10 @@ void main() {
   vec3 s = c * c * (3.0 - 2.0 * c);
   c = mix(c, s, clamp((uContrast - 1.0) * 2.5, -1.0, 1.0));
 
-  // warm-dark vignette
+  // warm vignette: the corners darken toward a rich brown (never crushed to black navy)
   vec2 d = (vUv - 0.5) * vec2(uRes.x / uRes.y, 1.0);
   float v = smoothstep(0.35, 1.15, length(d) * 1.25);
-  c = mix(c, c * uVignetteCol, v * uVignette);
+  c = mix(c, uVignetteCol + c * 0.4, v * uVignette);
 
   // film grain, strongest in the mids
   float g = hash12(vUv * uRes + fract(uTime * 7.31) * 517.0) - 0.5;
@@ -207,7 +228,7 @@ function fsMat(frag: string, uniforms: Record<string, THREE.IUniform>, blend = f
 }
 
 function maskUniforms(): Record<string, THREE.IUniform> {
-  return { uFocusY: { value: 0.5 }, uFocusHalf: { value: 0.2 }, uFocusSoft: { value: 0.25 }, uTilt: { value: 0 } };
+  return { uFocusY: { value: 0.5 }, uFocusHalf: { value: 0.2 }, uFocusSoft: { value: 0.18 }, uTilt: { value: 0 }, uBelow: { value: 1 } };
 }
 
 const BLOOM_LEVELS = 5;
@@ -278,6 +299,8 @@ export class Post {
   private compMat: THREE.ShaderMaterial;
   /** blur radius at full strength, as a fraction of the output height */
   blurFrac = 0.011;
+  /** width of the soft edge between the sharp band and full blur, in screen fractions */
+  focusSoft = 0.18;
 
   constructor(private renderer: THREE.WebGLRenderer) {
     const ext = renderer.extensions;
@@ -301,7 +324,7 @@ export class Post {
       uSat: { value: 1 },
       uContrast: { value: 1 },
       uVignette: { value: 0 },
-      uVignetteCol: { value: new THREE.Color(0.32, 0.2, 0.12) },
+      uVignetteCol: { value: new THREE.Color(0.165, 0.11, 0.078) },
       uGrain: { value: 0 },
       uTime: { value: 0 },
       uRes: { value: new THREE.Vector2(1, 1) },
@@ -364,8 +387,9 @@ export class Post {
       const u = this.tiltMat.uniforms;
       u.uFocusY.value = view.focusY;
       u.uFocusHalf.value = view.focusHalf;
-      u.uFocusSoft.value = 0.24;
+      u.uFocusSoft.value = this.focusSoft;
       u.uTilt.value = Math.min(1.5, tiltAmt);
+      u.uBelow.value = g.tiltBelow;
       const rad = this.blurFrac;
       u.tIn.value = ch.scene.texture;
       (u.uStep.value as THREE.Vector2).set((rad * ch.h) / ch.w, 0);
@@ -410,8 +434,9 @@ export class Post {
     c.uExposure.value = look.exposure;
     c.uFocusY.value = view.focusY;
     c.uFocusHalf.value = view.focusHalf;
-    c.uFocusSoft.value = 0.24;
+    c.uFocusSoft.value = this.focusSoft;
     c.uTilt.value = Math.min(1, tiltAmt);
+    c.uBelow.value = g.tiltBelow;
     _c.copy(g.shadowTint);
     (c.uShadowTint.value as THREE.Color).copy(_c).multiplyScalar(1 / Math.max(0.02, lumaOf(_c)));
     (c.uLift.value as THREE.Color).copy(_c).multiplyScalar(0.25);
@@ -420,6 +445,7 @@ export class Post {
     c.uSat.value = g.saturation;
     c.uContrast.value = g.contrast;
     c.uVignette.value = g.vignette;
+    (c.uVignetteCol.value as THREE.Color).copy(g.vignetteTint).convertLinearToSRGB(); // applied after the sRGB encode
     c.uGrain.value = g.grain;
     c.uTime.value = view.time;
     (c.uRes.value as THREE.Vector2).set(ch.w, ch.h);

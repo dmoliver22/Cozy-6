@@ -8,11 +8,11 @@ import { config } from '../config';
 import { makeBoat } from '../art/boat';
 import { makeCrew, CREW_LOOKS } from '../art/crew';
 import { makeCrab } from '../art/crab';
-import { toon, toonUnique, paint, box, cyl, canvasTexture } from '../art/materials';
+import { toon, toonUnique, box, cyl, canvasTexture } from '../art/materials';
 import { Snow } from '../weather/snow';
 import { harborLook, type Look } from '../render/look';
 import { SkyDome, SkyEnv, skyFromLook } from '../render/sky';
-import { rippleNormalTex } from '../render/textures';
+import { rippleNormalTex, snowNormalTex } from '../render/textures';
 import { appraise, UPGRADES, HAT_COLORS, type Appraisal, type TankEntry } from './market';
 import type { SaveData } from '../core/save';
 import { sfx, music } from '../audio';
@@ -37,6 +37,24 @@ function sign(text: string, color: string): THREE.Mesh {
   return new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.8), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.75 }));
 }
 
+/**
+ * Packed snow: a slightly cool off-white (albedo about 0.72, so the low sun doesn't blow it out),
+ * matte, with a lumpy wind-packed normal map so it reads as a surface. `rx`/`ry` are tiles per
+ * UV unit of the geometry it goes on (pick them so the tiles come out square, about 4 m).
+ */
+const snowMats = new Map<string, THREE.MeshStandardMaterial>();
+function snowMat(rx: number, ry = rx): THREE.MeshStandardMaterial {
+  const key = `${rx}_${ry}`;
+  let m = snowMats.get(key);
+  if (m) return m;
+  const n = snowNormalTex().clone();
+  n.repeat.set(rx, ry);
+  n.needsUpdate = true;
+  m = new THREE.MeshStandardMaterial({ color: 0xd9dde4, roughness: 0.86, metalness: 0, normalMap: n, normalScale: new THREE.Vector2(0.45, 0.45), envMapIntensity: 0.7 });
+  snowMats.set(key, m);
+  return m;
+}
+
 function building(w: number, h: number, d: number, wall: number, label: string, labelColor: string): THREE.Group {
   const g = new THREE.Group();
   g.add(box(w, h, d, toon(wall), 0, h / 2, 0));
@@ -51,7 +69,9 @@ function building(w: number, h: number, d: number, wall: number, label: string, 
   roof.castShadow = true;
   g.add(roof);
   // a snow cap over the roof (brown eaves peek out underneath)
-  const snow = new THREE.Mesh(new THREE.ExtrudeGeometry(roofShape, { depth: d + 0.3, bevelEnabled: false }), toon(P.foam));
+  // (extrude UVs are in metres)
+  const snow = new THREE.Mesh(new THREE.ExtrudeGeometry(roofShape, { depth: d + 0.3, bevelEnabled: false }), snowMat(0.35));
+  snow.receiveShadow = true;
   snow.scale.set(0.96, 1.0, 1);
   snow.position.set(0, h + 0.06, -d / 2 - 0.15);
   g.add(snow);
@@ -62,8 +82,9 @@ function building(w: number, h: number, d: number, wall: number, label: string, 
   const s = sign(label, labelColor);
   s.position.set(0, h + 0.1, d / 2 + 0.24); // in front of the roof's gable end, not inside it
   g.add(s);
-  const lamp = new THREE.PointLight(P.amber, 6, 9, 1.6);
-  lamp.position.set(0, h * 0.6, d / 2 + 1.2);
+  // the door lamp: soft and well off the wall, so the shop front glows instead of hot-spotting
+  const lamp = new THREE.PointLight(P.amber, 3, 9, 1.6);
+  lamp.position.set(0, h * 0.6, d / 2 + 1.7);
   g.add(lamp);
   return g;
 }
@@ -126,8 +147,10 @@ export class Harbor {
     sun.shadow.radius = 3;
     sun.shadow.intensity = 0.8;
     sc.add(sun, sun.target);
+    // a cool rim from up behind the shops: high enough that its mirror highlight on the glossy
+    // harbour water falls below the frame instead of glaring in the foreground
     const rim = new THREE.DirectionalLight(hl.rimColor, hl.rimIntensity);
-    rim.position.set(-20, 18, -30);
+    rim.position.set(-14, 40, -22);
     sc.add(rim);
     this.sky = new SkyDome(140);
     skyFromLook(this.sky.uniforms, hl, 0, { clouds: 1.3 });
@@ -136,14 +159,16 @@ export class Harbor {
     this.seaNormal = rippleNormalTex().clone();
     this.seaNormal.repeat.set(40, 40);
     this.seaNormal.needsUpdate = true;
-    const seaMat = new THREE.MeshStandardMaterial({ color: hl.sea.mid, roughness: 0.16, metalness: 0.0, normalMap: this.seaNormal, normalScale: new THREE.Vector2(0.16, 0.16), envMapIntensity: 1.1 });
+    // rough enough that the bright sunset sky smears into a soft sheen, not a blown blob
+    // (the quay lamps' highlights included: they spread into soft warm streaks)
+    const seaMat = new THREE.MeshStandardMaterial({ color: hl.sea.mid, roughness: 0.32, metalness: 0.0, normalMap: this.seaNormal, normalScale: new THREE.Vector2(0.2, 0.2), envMapIntensity: 0.75 });
     const sea = new THREE.Mesh(new THREE.PlaneGeometry(300, 300), seaMat);
     sea.rotation.x = -Math.PI / 2;
     sea.position.y = -0.6;
     sea.receiveShadow = true;
     sc.add(sea);
     // snowy shore
-    const shore = new THREE.Mesh(new THREE.BoxGeometry(80, 1, 22), paint(0xeef3f7, { rough: 0.85, wear: 0.3 }));
+    const shore = new THREE.Mesh(new THREE.BoxGeometry(80, 1, 22), snowMat(18, 5)); // 80 × 22 m top: ~4.4 m tiles
     shore.position.set(0, -0.3, -14);
     shore.receiveShadow = true;
     sc.add(shore);
@@ -180,7 +205,7 @@ export class Harbor {
       const post = cyl(0.07, 0.09, 3, toon(0x2b2f36), 6);
       post.position.set(x, 1.5, -4.6);
       const bulb = box(0.3, 0.3, 0.3, toonUnique(0xffe1a8, { emissive: 0xffc070 }), x, 3.1, -4.6);
-      const pl = new THREE.PointLight(0xffd29a, 4, 8, 1.8);
+      const pl = new THREE.PointLight(0xffc98a, 2.6, 8, 1.8);
       pl.position.set(x, 3, -4.6);
       sc.add(post, bulb, pl);
     }

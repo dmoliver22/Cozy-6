@@ -28,10 +28,17 @@ export const config = {
     /** …but no more often than this (seconds); Low waits longer */
     envRegenMinSec: 1.5,
     envRegenMinSecLow: 4,
-    /** scene.environmentIntensity at golden hour / full storm */
-    envIntensity: [0.55, 0.75] as [number, number],
+    /** scene.environmentIntensity at golden hour / full storm (low at golden hour so the sea's
+     * sky reflection stays teal-slate rather than cyan) */
+    envIntensity: [0.45, 0.75] as [number, number],
     /** tilt-shift blur radius at full strength, as a fraction of the screen height */
     tiltBlur: 0.013,
+    /** soft edge between the sharp band and full blur (screen fractions): small = an obvious miniature band */
+    tiltSoft: 0.18,
+    /** the sharp band reaches this far (screen fractions) below the hull so the waterline foam and wake stay crisp */
+    tiltBandBelow: 0.06,
+    /** phones with devicePixelRatio >= 1.5 drop the tilt-shift pass when frames average more than this (ms) */
+    phoneTiltSkipMs: 16,
     /** sun shadow softness (PCF radius in texels) */
     shadowRadius: 3,
   },
@@ -256,16 +263,16 @@ export const config = {
     overhead: {
       fov: 30,
       /** pitch when zoomed out (a low, diorama three-quarter view) … */
-      pitchDeg: 44,
+      pitchDeg: 40,
       /** … steepening as you zoom in so the rails don't hide the deck */
       pitchNearDeg: 54,
       /** portrait (stern view, bow up) stays steeper so the long deck isn't foreshortened */
       portraitPitchDeg: 52,
-      distanceFar: 48, // whole boat
+      distanceFar: 50, // whole boat
       distanceNear: 15, // close on my deckhand
       followLag: 2.2, // smoothing rate (1/s)
       yawLag: 1.6,
-      landscapeYawDeg: 74, // three-quarter from the starboard quarter: bow points screen-right and a little away
+      landscapeYawDeg: 58, // from the starboard quarter: the boat runs diagonally, bow to the upper right (about 30 degrees)
       portraitYawDeg: 0, // stern view: bow points screen-up
       shake: 0.15,
     },
