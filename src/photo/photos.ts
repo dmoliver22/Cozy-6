@@ -1,7 +1,12 @@
 /**
  * Auto-captured "moments" (max 6): someone overboard, a wave wipeout, the golden crab,
  * a special catch, everyone braced through a rogue set, the cat sliding. Rendered from a
- * dedicated photo camera into a small target, kept as JPEG data URLs for the galley wall.
+ * dedicated photo camera through the same post pipeline as the game (tilt-shift, bloom, grade),
+ * kept as JPEG data URLs for the galley wall.
+ *
+ * Capturing never blocks: requests made during the sim step are queued and shot right after the
+ * next frame is drawn (scene state matches the screen, the shadow map is reused), the pixels come
+ * back through readRenderTargetPixelsAsync, and the JPEG is encoded with canvas.toBlob.
  */
 import * as THREE from 'three';
 import { config } from '../config';
@@ -15,27 +20,40 @@ import type { CrewManager } from '../crew/crewManager';
 const NAMES: Record<string, string> = { player: 'You', mo: 'Mo', dot: 'Dot', ike: 'Ike' };
 const SPECIAL_NAMES: Record<string, string> = { bottle: 'a message in a bottle', octopus: 'an octopus', boot: "somebody's boot", bell: "an old ship's bell", otter: 'a sea otter', jelly: 'a glowing jellyfish' };
 
+/** What the photographer needs from the stage. */
+export interface PhotoStage {
+  /** graded RGBA8 pixels of the scene from `camera`, bottom row first */
+  capture(camera: THREE.PerspectiveCamera, w: number, h: number): Promise<Uint8Array>;
+  /** run after every rendered sea frame */
+  onAfterRender(fn: () => void): void;
+}
+
+interface Shot {
+  caption: string;
+  kind: string;
+  subject: () => THREE.Vector3;
+}
+
 export class PhotoDirector {
   readonly photos: PhotoRecord[] = [];
   private kinds = new Set<string>();
   private cam: THREE.PerspectiveCamera;
-  private rt: THREE.WebGLRenderTarget;
   private canvas: HTMLCanvasElement;
   private pending = 0;
+  private queue: Shot[] = [];
+  private busy = false;
   enabled = true;
 
   constructor(
     private ctx: Ctx,
-    private renderer: THREE.WebGLRenderer,
-    private scene: THREE.Scene,
+    private stage: PhotoStage,
     private flash: () => void,
-    private beforeCapture: () => void = () => {},
   ) {
     ctx.sys.photos = this;
     const w = config.photo.width,
       h = config.photo.height;
     this.cam = new THREE.PerspectiveCamera(42, w / h, 0.2, 400);
-    this.rt = new THREE.WebGLRenderTarget(w, h, { colorSpace: THREE.SRGBColorSpace, samples: 4 });
+    stage.onAfterRender(() => this.flush());
     this.canvas = document.createElement('canvas');
     this.canvas.width = w;
     this.canvas.height = h;
@@ -73,17 +91,26 @@ export class PhotoDirector {
     if (this.kinds.has(kind)) return;
     this.kinds.add(kind);
     this.pending++;
-    later(delay, () => {
-      this.pending--;
-      try {
-        this.capture(caption, kind, subject());
-      } catch (e) {
-        console.warn('photo failed', e);
-      }
-    });
+    // the shutter fires after the next rendered frame, outside the sim step
+    later(delay, () => this.queue.push({ caption, kind, subject }));
   }
 
-  private capture(caption: string, kind: string, s: THREE.Vector3): void {
+  /** One shot per frame, after the frame is drawn. */
+  private flush(): void {
+    if (this.busy || !this.queue.length) return;
+    const shot = this.queue.shift()!;
+    this.busy = true;
+    this.capture(shot)
+      .catch((e) => console.warn('photo failed', e))
+      .finally(() => {
+        this.pending--;
+        this.busy = false;
+      });
+  }
+
+  private async capture(shot: Shot): Promise<void> {
+    const { caption, kind } = shot;
+    const s = shot.subject();
     const b = this.ctx.boat;
     // frame from the starboard quarter, above, looking at the subject with the boat behind it
     const side = new THREE.Vector3(-Math.cos(b.yaw), 0, Math.sin(b.yaw)); // starboard
@@ -91,34 +118,41 @@ export class PhotoDirector {
     this.cam.position.copy(s).addScaledVector(side, 6.5).addScaledVector(back, 3).add(new THREE.Vector3(0, 4.2, 0));
     this.cam.lookAt(s.x, s.y + 0.6, s.z);
     this.cam.updateMatrixWorld();
-    this.beforeCapture();
-    const r = this.renderer;
-    const prev = r.getRenderTarget();
-    r.setRenderTarget(this.rt);
-    r.clear();
-    r.render(this.scene, this.cam);
-    const w = this.rt.width,
-      h = this.rt.height;
-    const buf = new Uint8Array(w * h * 4);
-    r.readRenderTargetPixels(this.rt, 0, 0, w, h, buf);
-    r.setRenderTarget(prev);
+    const w = config.photo.width,
+      h = config.photo.height;
+    const pixels = this.stage.capture(this.cam, w, h);
+    // the shutter moment: sound, flash and toast now, the print develops in the background
+    sfx.play('camera', { volume: 0.6 });
+    this.flash();
+    events.emit('photo', { caption });
+    const buf = await pixels;
     const g = this.canvas.getContext('2d')!;
     const img = g.createImageData(w, h);
     // flip vertically (GL origin is bottom-left)
     for (let y = 0; y < h; y++) img.data.set(buf.subarray((h - 1 - y) * w * 4, (h - y) * w * 4), y * w * 4);
     g.putImageData(img, 0, 0);
-    // a warm little vignette
-    const grd = g.createRadialGradient(w / 2, h / 2, h * 0.3, w / 2, h / 2, h * 0.75);
-    grd.addColorStop(0, 'rgba(0,0,0,0)');
-    grd.addColorStop(1, 'rgba(40,20,0,0.35)');
-    g.fillStyle = grd;
-    g.fillRect(0, 0, w, h);
-    const url = this.canvas.toDataURL('image/jpeg', 0.82);
+    const url = await toJpegDataUrl(this.canvas, 0.84);
     this.photos.push({ img: url, caption, kind });
-    sfx.play('camera', { volume: 0.6 });
-    this.flash();
-    events.emit('photo', { caption });
   }
+}
+
+/** JPEG data URL, encoded off the main thread where the browser can (toBlob). */
+function toJpegDataUrl(c: HTMLCanvasElement, q: number): Promise<string> {
+  return new Promise((res) => {
+    const sync = () => res(c.toDataURL('image/jpeg', q));
+    if (!c.toBlob) return sync();
+    c.toBlob(
+      (blob) => {
+        if (!blob) return sync();
+        const fr = new FileReader();
+        fr.onload = () => res(String(fr.result));
+        fr.onerror = sync;
+        fr.readAsDataURL(blob);
+      },
+      'image/jpeg',
+      q,
+    );
+  });
 }
 
 /** Render a 1080 × 1350 postcard of the best photo with the trip stats. */

@@ -23,12 +23,35 @@ export const config = {
     autoDowngradeMs: 20, // frame time that, if sustained, drops quality
     autoDowngradeWindowSec: 3,
     autoUpgradeMs: 11,
+    /** the sky env map (PMREM) is rebuilt when the storm amount moves this far… */
+    envRegenStorm: 0.04,
+    /** …but no more often than this (seconds); Low waits longer */
+    envRegenMinSec: 1.5,
+    envRegenMinSecLow: 4,
+    /** scene.environmentIntensity at golden hour / full storm (low at golden hour so the sea's
+     * sky reflection stays teal-slate rather than cyan) */
+    envIntensity: [0.45, 0.75] as [number, number],
+    /** tilt-shift blur radius at full strength, as a fraction of the screen height */
+    tiltBlur: 0.013,
+    /** soft edge between the sharp band and full blur (screen fractions): small = an obvious miniature band */
+    tiltSoft: 0.18,
+    /** the sharp band reaches this far (screen fractions) below the hull so the waterline foam and wake stay crisp */
+    tiltBandBelow: 0.06,
+    /** phones with devicePixelRatio >= 1.5 drop the tilt-shift pass when frames average more than this (ms) */
+    phoneTiltSkipMs: 16,
+    /** sun shadow softness (PCF radius in texels) */
+    shadowRadius: 3,
   },
 
+  /**
+   * Quality tiers. Low renders straight to the canvas (no post passes, no shadows). Medium adds
+   * the HDR target with tilt-shift + grade and 1024 shadows. High adds MSAA, bloom and 2048
+   * shadows. msaa is ignored on phones (bandwidth).
+   */
   quality: {
-    low: { seaSegments: 96, shadows: false, snow: 500, spray: 120, pixelRatio: 1.0, outline: true },
-    medium: { seaSegments: 160, shadows: false, snow: 1200, spray: 240, pixelRatio: 1.25, outline: true },
-    high: { seaSegments: 240, shadows: true, snow: 2400, spray: 400, pixelRatio: 2.0, outline: true },
+    low: { seaSegments: 96, shadows: false, shadowMapSize: 0, post: false, msaa: 0, bloom: false, tilt: false, snow: 500, spray: 120, pixelRatio: 1.0, outline: true },
+    medium: { seaSegments: 160, shadows: true, shadowMapSize: 1024, post: true, msaa: 2, bloom: false, tilt: true, snow: 1200, spray: 240, pixelRatio: 1.25, outline: true },
+    high: { seaSegments: 240, shadows: true, shadowMapSize: 2048, post: true, msaa: 4, bloom: true, tilt: true, snow: 2400, spray: 400, pixelRatio: 2.0, outline: true },
   },
 
   sea: {
@@ -239,12 +262,17 @@ export const config = {
   camera: {
     overhead: {
       fov: 30,
-      pitchDeg: 55,
-      distanceFar: 46, // whole boat
+      /** pitch when zoomed out (a low, diorama three-quarter view) … */
+      pitchDeg: 40,
+      /** … steepening as you zoom in so the rails don't hide the deck */
+      pitchNearDeg: 54,
+      /** portrait (stern view, bow up) stays steeper so the long deck isn't foreshortened */
+      portraitPitchDeg: 52,
+      distanceFar: 50, // whole boat
       distanceNear: 15, // close on my deckhand
       followLag: 2.2, // smoothing rate (1/s)
       yawLag: 1.6,
-      landscapeYawDeg: 90, // broadside: bow points screen-right
+      landscapeYawDeg: 58, // from the starboard quarter: the boat runs diagonally, bow to the upper right (about 30 degrees)
       portraitYawDeg: 0, // stern view: bow points screen-up
       shake: 0.15,
     },
