@@ -73,6 +73,9 @@ export const config = {
       fadeInSec: 6, // amplitude ramps up as it approaches
     },
     foamSlope: 0.55,
+    /** shading-only chop on top of the swell (slope gain of the relief layer in the sea shader):
+     * lit backs and dark troughs that read from the overhead camera; the geometry is untouched */
+    relief: 0.28,
     colorDeep: 0x123f47,
     colorShallow: 0x1f5c66,
     colorFoam: 0xeaf2f0,

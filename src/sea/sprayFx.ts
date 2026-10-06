@@ -8,9 +8,14 @@ import { ParticleCloud } from './spray';
 import { RippleField } from './ripples';
 import type { Ctx } from '../game/ctx';
 import { seaWorld } from './seaLook';
+import { BOW_Z, hullHalfWidth } from '../boat/layout';
+import { config } from '../config';
 
 const _v = new THREE.Vector3();
 const _d = new THREE.Vector3();
+const _w = new THREE.Vector3();
+/** boat-local height of the waterline (the deck is y = 0) */
+const WATERLINE = -config.boat.freeboard;
 
 export class SprayFx {
   readonly world: ParticleCloud;
@@ -18,6 +23,9 @@ export class SprayFx {
   readonly shards: ParticleCloud;
   readonly ripples: RippleField;
   private bowCooldown = 0;
+  /** bow-wave spray owed (droplets), carried between steps */
+  private bowAcc = 0;
+  private bowPuff = 0;
 
   constructor(private ctx: Ctx, capacity: number) {
     // a small pool of expanding rings for things plopping into the sea
@@ -96,6 +104,7 @@ export class SprayFx {
   }
 
   step(dt: number): void {
+    this.bowWave(dt);
     // crest meeting the bow: spray when the bow plunges fast / big waves
     const b = this.ctx.boat;
     this.bowCooldown -= dt;
@@ -108,6 +117,43 @@ export class SprayFx {
       // sheets off both shoulders of the bow
       this.burstLocal(_v.set(2.4, -0.1, 8.3), _d.set(1.1, 0.9, 0.3), Math.round(n * 0.4), 2 + swell * 3, 0.8);
       this.burstLocal(_v.set(-2.4, -0.1, 8.3), _d.set(-1.1, 0.9, 0.3), Math.round(n * 0.4), 2 + swell * 3, 0.8);
+    }
+  }
+
+  /**
+   * Making way: a steady white bow wave peeling off both shoulders (the sea shader draws its foam
+   * on the water; this is the spray thrown up from it). Droplets leave the hull outward and up in
+   * world space, so they stream aft as the boat moves on, with a soft puff of mist now and then.
+   * The rate grows with speed and is scaled to the pool, so Low keeps room for splashes.
+   */
+  private bowWave(dt: number): void {
+    const b = this.ctx.boat;
+    const sf = THREE.MathUtils.clamp((b.speed - 0.8) / (config.boat.speed.cruise - 0.8), 0, 1.25);
+    if (sf <= 0) {
+      this.bowAcc = 0;
+      return;
+    }
+    const pool = Math.min(1, this.world.capacity / 400);
+    this.bowAcc += dt * (8 + 30 * sf) * (0.4 + 0.6 * pool);
+    let n = Math.min(12, Math.floor(this.bowAcc));
+    this.bowAcc -= n;
+    while (n-- > 0) {
+      const side = Math.random() < 0.5 ? -1 : 1;
+      // mostly at the shoulder, a few right up at the stem
+      const z = BOW_Z - 0.5 - Math.pow(Math.random(), 1.4) * 2.8;
+      const hw = hullHalfWidth(z) * 0.9 + 0.08;
+      _v.set(side * hw, WATERLINE + 0.05 + Math.random() * 0.2, z);
+      _d.set(side * (0.8 + Math.random() * 0.7), 0.9 + Math.random() * 0.9, 0.35 + Math.random() * 0.5).normalize();
+      this.ctx.boat.localToWorld(_v, _w);
+      this.ctx.boat.dirLocalToWorld(_d, _v);
+      _v.multiplyScalar((1.2 + 2.2 * sf) * (0.6 + Math.random() * 0.6));
+      this.world.emit(_w, _v, 0.45 + Math.random() * 0.45, 0.22 + Math.random() * 0.2);
+      if (++this.bowPuff >= 7) {
+        this.bowPuff = 0;
+        _v.multiplyScalar(0.25);
+        _v.y += 0.3;
+        this.world.emit(_w, _v, 0.9 + Math.random() * 0.5, 0.7 + Math.random() * 0.5 + sf * 0.3, 1);
+      }
     }
   }
 

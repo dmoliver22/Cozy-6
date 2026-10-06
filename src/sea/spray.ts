@@ -44,6 +44,9 @@ void main() {
   // pixels either (a droplet near the camera must not become a white blob). Mist may grow more:
   // it is soft and faint, the haze over a splash
   gl_PointSize = clamp(size * el, 2.5, max(2.5, uMaxPx * (aMeta.y > 0.5 ? 4.0 : 1.0)));
+  // sized for the distance: a droplet smaller than the 2.5 px floor fades instead of drawing as a
+  // full-strength dot (far spray reads as a faint haze, not paper confetti)
+  vAlpha *= clamp(size * el / 2.5, 0.3, 1.0);
   // fade out within 6 m of the camera (spray drifting past the lens in first person)
   vAlpha *= smoothstep(2.0, 6.0, -mv.z);
   gl_Position = c1;
@@ -96,12 +99,16 @@ void main() {
     a *= a * 0.55;
   } else {
     // droplet: bright core, soft rim, a tiny highlight
-    a = 1.0 - smoothstep(0.45, 1.0, r);
+    a = 1.0 - smoothstep(0.3, 1.0, r);
     col *= 1.0 + 0.45 * (1.0 - smoothstep(0.0, 0.35, length(q - vec2(-0.12, -0.12))));
   }
-  gl_FragColor = vec4(col, a * vAlpha);
+  // premultiplied alpha (blended One, OneMinusSrcAlpha): the soft rim fades to nothing, never to
+  // a fringe of the sprite's colour; tone mapped before the multiply
+  gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
+  float alpha = a * vAlpha;
+  gl_FragColor = vec4(gl_FragColor.rgb * alpha, alpha);
 }`;
 
 export interface CloudStyle {
@@ -169,6 +176,7 @@ export class ParticleCloud {
       fragmentShader: FRAG,
       transparent: true,
       depthWrite: false,
+      premultipliedAlpha: true,
     });
     this.points = new THREE.Points(g, this.mat);
     this.points.frustumCulled = false;

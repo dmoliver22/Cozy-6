@@ -2,8 +2,9 @@
  * makePot(): 2 × 0.9 × 2 m king-crab pot: a chunky galvanised round-bar frame with orange corner
  * bumpers and skids, galvanised wire-mesh panels (procedural, anti-aliased wire up close that eases
  * into a semi-opaque tinted panel at a distance or on Low, so a stack reads as stacked boxes),
- * dark teal-grey webbing entrance tunnels (an empty pot reads empty: orange or red inside means
- * crabs), a single hinged mesh door with a thin rim, and a hanging bait tub with a bait bag.
+ * light orange-tan webbing entrance tunnels (see-through netting from afar, so a pot reads as a
+ * clean wire cage with netting inside; the red catch stands out against it), a single hinged mesh
+ * door with a thin rim, and a hanging bait tub with a bait bag.
  * Origin = pot centre. Handles let gameplay show bait, fullness, door, water.
  *
  * Static parts are folded with mergeStatic() (three draw calls per pot plus two for the door); the
@@ -111,9 +112,9 @@ export function makePot(): PotView {
   root.name = 'pot';
   const frame = metal(0xbcc4c8, { rough: 0.4, metalness: 0.6 });
   const wire = meshPanelMat(C.galv, 8, { rough: 0.5, metalness: 0.3, wire: 0.06, panel: 0.45, panelOnly: low });
-  // orange only on the bumpers and skids (accent parts); the tunnels, tags and bait bag are dark
-  // teal-grey. One material for both, so the merged pot keeps three draw calls
-  const web = webbingMat(0x2f4a48, C.orange);
+  // the bumpers and skids (accent parts) are solid orange; the tunnels, tags and bait bag are a
+  // lighter orange-tan netting. One material for both, so the merged pot keeps three draw calls
+  const web = webbingMat(0xd9955a, C.orange);
   const seg = low ? 6 : 8;
   const r = 0.063; // round bar radius
   const hx = W / 2 - r,

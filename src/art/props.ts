@@ -18,6 +18,9 @@ import { paint, wood, metal, rope, rubber, glass, glow, line3, meshGridTex, canv
 
 export const C = {
   hullRed: 0xc9573c,
+  /** varnished hull planking (honey teak) and its narrow sheer stripe */
+  hullWood: 0xb46a34,
+  hullWoodStripe: 0xe2582a,
   /** dark boot-top at the waterline: the lacy sea collar reads against it */
   boot: 0x2b2724,
   antifoul: 0x5b2523,
@@ -473,28 +476,43 @@ function hullTextures(): { map: THREE.CanvasTexture; bump: THREE.CanvasTexture }
 }
 
 /**
- * The Puffin's hull paint: planked topsides (uv = metres along × metres of girth from the
- * gunwale), with a cream sheer stripe under the rail, a dark boot-top at the waterline (with a
- * thin cream pinstripe above it) and dark antifouling below, all picked in the shader from object-space height so merging keeps it.
+ * Hull finish: 'wood' is warm varnished planking (honey-teak strakes, each a slightly different
+ * tone, with a fine grain that fades out before it can shimmer) with a narrow red-orange sheer
+ * stripe; 'paint' is the older red topsides with a broad cream sheer stripe. Both keep the dark
+ * boot-top, its cream pinstripe and the antifouling.
+ */
+export const HULL_FINISH: 'wood' | 'paint' = 'wood';
+
+/**
+ * The Puffin's hull: planked topsides (uv = metres along × metres of girth from the gunwale), with
+ * a sheer stripe under the rail, a dark boot-top at the waterline (with a thin cream pinstripe
+ * above it) and dark antifouling below, all picked in the shader from object-space height so
+ * merging keeps it. See HULL_FINISH.
  */
 export function hullPaint(waterlineY: number): THREE.MeshStandardMaterial {
   return once(`hull${waterlineY}`, () => {
     const { map, bump } = hullTextures();
-    const m = new THREE.MeshStandardMaterial({ color: 0xffffff, map, bumpMap: bump, bumpScale: 1.1, roughness: 0.58, metalness: 0 });
+    const woodHull = HULL_FINISH === 'wood';
+    // varnish: a little glossier than paint
+    const m = new THREE.MeshStandardMaterial({ color: 0xffffff, map, bumpMap: bump, bumpScale: 1.1, roughness: woodHull ? 0.46 : 0.58, metalness: 0 });
     const uni = {
-      uTop: { value: new THREE.Color(C.hullRed) },
+      uTop: { value: new THREE.Color(woodHull ? C.hullWood : C.hullRed) },
       uBoot: { value: new THREE.Color(C.boot) },
       uBottom: { value: new THREE.Color(C.antifoul) },
-      uStripe: { value: new THREE.Color(C.stripe) },
+      uStripe: { value: new THREE.Color(woodHull ? C.hullWoodStripe : C.stripe) },
+      uPin: { value: new THREE.Color(C.stripe) },
       uWL: { value: waterlineY },
     };
+    // sheer stripe band (metres of girth below the gunwale)
+    const st0 = woodHull ? 0.06 : 0.04,
+      st1 = woodHull ? 0.24 : 0.36;
     m.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, uni);
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', '#include <common>\nvarying float vHullY;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvHullY = position.y;');
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nvarying float vHullY;\nuniform vec3 uTop, uBoot, uBottom, uStripe;\nuniform float uWL;')
+        .replace('#include <common>', `#include <common>\nvarying float vHullY;\nuniform vec3 uTop, uBoot, uBottom, uStripe, uPin;\nuniform float uWL;\n${woodHull ? '#define HULL_WOOD' : ''}`)
         .replace(
           '#include <map_fragment>',
           `#include <map_fragment>
@@ -504,7 +522,21 @@ export function hullPaint(waterlineY: number): THREE.MeshStandardMaterial {
             #ifdef USE_MAP
               float girth = vMapUv.y * ${HULL_TEX_V.toFixed(2)};
               float ga = fwidth(girth) + 1e-4;
-              float stripe = smoothstep(0.04 - ga, 0.04 + ga, girth) * (1.0 - smoothstep(0.36 - ga, 0.36 + ga, girth));
+              #ifdef HULL_WOOD
+              {
+                // each strake its own tone (honey to teak), and a fine grain along the planks that
+                // fades out once it is under a couple of pixels
+                float along = vMapUv.x * ${HULL_TEX_U.toFixed(1)};
+                float strake = floor(girth / ${(HULL_TEX_V / 10).toFixed(3)});
+                float sh = fract(sin(strake * 91.7 + 3.1) * 43758.5453);
+                tint *= mix(vec3(0.86, 0.82, 0.8), vec3(1.08, 1.06, 1.02), sh);
+                float gw = girth * 140.0 + sin(along * 0.9 + strake * 2.3) * 3.0 + sin(along * 3.7 + girth * 31.0) * 0.6;
+                float grain = 0.5 + 0.5 * sin(gw);
+                float gFade = 1.0 - smoothstep(0.25, 0.8, fwidth(gw) / 6.2832);
+                tint *= 1.0 - 0.12 * grain * grain * gFade;
+              }
+              #endif
+              float stripe = smoothstep(${st0.toFixed(2)} - ga, ${st0.toFixed(2)} + ga, girth) * (1.0 - smoothstep(${st1.toFixed(2)} - ga, ${st1.toFixed(2)} + ga, girth));
               tint = mix(tint, uStripe, stripe);
             #endif
             float bootTop = uWL + 0.22;
@@ -512,7 +544,7 @@ export function hullPaint(waterlineY: number): THREE.MeshStandardMaterial {
             tint = mix(tint, uBoot, 1.0 - smoothstep(bootTop - aa, bootTop + aa, vHullY));
             // a thin cream pinstripe on top of the boot-top
             float pin = smoothstep(bootTop - aa, bootTop + aa, vHullY + 0.035) * (1.0 - smoothstep(bootTop - aa, bootTop + aa, vHullY));
-            tint = mix(tint, uStripe, pin);
+            tint = mix(tint, uPin, pin);
             tint = mix(tint, uBottom, 1.0 - smoothstep(bootBot - aa, bootBot + aa, vHullY));
             // grime near the waterline
             tint *= mix(1.0, 0.86, (1.0 - smoothstep(uWL + 0.15, uWL + 0.7, vHullY)) * step(bootTop, vHullY));
@@ -520,7 +552,7 @@ export function hullPaint(waterlineY: number): THREE.MeshStandardMaterial {
           }`,
         );
     };
-    m.customProgramCacheKey = () => 'puffinHull';
+    m.customProgramCacheKey = () => `puffinHull_${HULL_FINISH}`;
     return m;
   });
 }
@@ -637,7 +669,7 @@ export function webbingMat(color: number, solidColor?: number): THREE.MeshStanda
     m.onBeforeCompile = (sh) => {
       if (solid) sh.uniforms.uWebSolid = { value: solid };
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', `#include <common>\n${solid ? '#define WEB_SOLID\nuniform vec3 uWebSolid;' : ''}`)
+        .replace('#include <common>', `#include <common>\nfloat webFar = 0.0;\n${solid ? '#define WEB_SOLID\nuniform vec3 uWebSolid;' : ''}`)
         .replace(
           '#include <alphamap_fragment>',
           `#include <alphamap_fragment>
@@ -646,13 +678,21 @@ export function webbingMat(color: number, solidColor?: number): THREE.MeshStanda
           float a = diffuseColor.a;
           float tpp = length(fwidth(vAlphaMapUv)) * 128.0;
           float sharp = clamp((a - 0.5) / max(fwidth(a), 1e-4) * 0.5 + 0.5, 0.0, 1.0);
-          // far away: 65% coverage (a soft see-through netting where MSAA is on, solid where not)
-          diffuseColor.a = mix(sharp, 0.68, smoothstep(2.5, 5.5, tpp));
+          // far away the knots blur into an even partial coverage (set after the alpha test
+          // below, which would otherwise snap any constant alpha over 0.5 to solid)
+          webFar = smoothstep(2.5, 5.5, tpp);
+          diffuseColor.a = mix(sharp, 0.75, webFar);
           #ifdef WEB_SOLID
-            if (vAlphaMapUv.x < ${(WEB_SOLID_U + 1).toFixed(1)}) diffuseColor = vec4(uWebSolid, 1.0);
+            if (vAlphaMapUv.x < ${(WEB_SOLID_U + 1).toFixed(1)}) { diffuseColor = vec4(uWebSolid, 1.0); webFar = 0.0; }
           #endif
         }
         #endif`,
+        )
+        .replace(
+          '#include <alphatest_fragment>',
+          `#include <alphatest_fragment>
+        // far: about half the samples covered (a see-through netting where MSAA is on)
+        diffuseColor.a = mix(diffuseColor.a, 0.5, webFar);`,
         );
     };
     m.customProgramCacheKey = () => (solid ? 'webbingA2C_solid' : 'webbingA2C');
