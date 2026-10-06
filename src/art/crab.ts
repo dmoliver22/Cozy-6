@@ -1,8 +1,9 @@
 /**
  * Crab art. Instanced in-game: one geometry per sex (shell + legs + claws, tinted per instance by
- * species) plus an "apron" marker geometry on top of the shell. The sorting rule is visual:
- *   KEEP  = wide body + a bold cream chevron (male, big)
- *   THROW = rounder body + a big round cool-white disc (female) or a small crab.
+ * species) plus an "apron" marker geometry on top of the shell. The sorting rule is visual, and
+ * the markers differ by hue as well as shape:
+ *   KEEP  = wide body + a bold yellow chevron across most of the shell (male, big)
+ *   THROW = rounder body + a pale blue open ring (female), or a small crab whose chevron is grey
  *
  * The body geometry carries a vertex colour that multiplies the species colour: a knobbly glossy
  * shell with darker spots, a paler underside, banded legs, black-tipped claws and black eyes.
@@ -213,23 +214,82 @@ function densify(poly: P2[], step: number): P2[] {
   return out;
 }
 
+/** Marker colours (linear). The undersize male's grey is applied per instance (crabFlapMaterial). */
+const MARK_KEEP = new THREE.Color(0xffd23a);
+const MARK_FEMALE = new THREE.Color(0x9fe3ff);
+const MARK_SMALL = new THREE.Color(0xb8b8b8);
+const MARK_EDGE = new THREE.Color(0x2a1d10);
+/** Instance scale below which a male is undersize (sizes: undersize 0.62–0.75, keepers 0.92+). */
+const SMALL_SCALE = 0.82;
+
 /**
- * The apron marker drawn on top so it reads from the overhead camera: a bold chevron on males
- * (KEEP) and a big round disc on females (THROW), each with a dark 1 cm outline, cream on males
- * and cool white on females (a second, colour-blind-safe cue). Every vertex is draped onto the
- * actual shell mesh (ray cast) 4 mm up, and the material has a polygon offset, so the marker
- * hugs the carapace without fins or z-fighting. Colours live in the vertex colours.
+ * The apron marker drawn on top so it reads from the overhead camera, different in hue and in
+ * shape: a bold yellow chevron across 70% of the shell on males (KEEP; grey on an undersize male,
+ * see crabFlapMaterial) and a pale blue open ring on females (THROW), each with a dark outline.
+ * Every vertex is draped onto the actual shell mesh (ray cast) 4 mm up, and the material has a
+ * polygon offset, so the marker hugs the carapace without fins or z-fighting. Colours live in the
+ * vertex colours.
  */
 export function crabFlapGeometry(sex: CrabSex): THREE.BufferGeometry {
   const male = sex === 'm';
+  // drape onto the rendered shell
+  const shellMesh = new THREE.Mesh(shellGeometry(sex), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  const ray = new THREE.Raycaster();
+  const down = new THREE.Vector3(0, -1, 0);
+  const o = new THREE.Vector3();
+  const drape = (p: P2): [number, number, number] => {
+    ray.set(o.set(p[0], 0.5, p[1]), down);
+    const hit = ray.intersectObject(shellMesh, false)[0];
+    return [p[0], (hit ? hit.point.y : 0.03) + 0.004, p[1]];
+  };
+  const verts: number[] = [];
+  const cols: number[] = [];
+  const tri = (a: P2, b: P2, c: P2, col: THREE.Color) => {
+    // wind counter-clockwise seen from above (+y normal)
+    const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    const pts = cross < 0 ? [a, b, c] : [a, c, b];
+    for (const p of pts) {
+      verts.push(...drape(p));
+      cols.push(col.r, col.g, col.b);
+    }
+  };
+  const finish = () => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+    g.computeVertexNormals();
+    return g;
+  };
+
+  if (!male) {
+    // an open ring: dark edge, pale blue band, dark edge (the shell shows through the middle)
+    const cz = -0.006;
+    const radii: [number, number, THREE.Color][] = [
+      [0.08, 0.069, MARK_EDGE],
+      [0.069, 0.047, MARK_FEMALE],
+      [0.047, 0.039, MARK_EDGE],
+    ];
+    const n = 28;
+    const at = (r: number, i: number): P2 => {
+      const a = (i / n) * Math.PI * 2;
+      return [Math.sin(a) * r, Math.cos(a) * r + cz];
+    };
+    for (const [r0, r1, col] of radii)
+      for (let i = 0; i < n; i++) {
+        tri(at(r0, i), at(r0, i + 1), at(r1, i), col);
+        tri(at(r0, i + 1), at(r1, i + 1), at(r1, i), col);
+      }
+    return finish();
+  }
+
+  // chevron (an arrowhead pointing at the tail): 19 cm across the front (70% of the shell), 14 cm long
   let outline: P2[];
   let kernel: P2;
-  if (male) {
-    // chevron (an arrowhead pointing at the tail): 10 cm across the front, 12 cm long
-    const zf = 0.058,
-      L = 0.12,
-      hw = 0.052,
-      notch = 0.022;
+  {
+    const zf = 0.062,
+      L = 0.14,
+      hw = 0.096,
+      notch = 0.03;
     // slightly convex flanks fatten the arms of the V
     outline = [
       [0, zf - L],
@@ -242,18 +302,10 @@ export function crabFlapGeometry(sex: CrabSex): THREE.BufferGeometry {
       [-hw * 0.55 - 0.007, zf - L * 0.45 - 0.002],
     ];
     kernel = [0, -0.012];
-  } else {
-    outline = [];
-    const r = 0.075;
-    for (let i = 0; i < 20; i++) {
-      const a = (i / 20) * Math.PI * 2;
-      outline.push([Math.sin(a) * r, Math.cos(a) * r - 0.006]);
-    }
-    kernel = [0, -0.006];
   }
   const outer = densify(outline, 0.012);
-  // the inner loop: the same points pushed 1 cm in (keeps the point count, so the ring is a strip)
-  const innerAll = insetPoly(outline, 0.01, kernel);
+  // the inner loop: the same points pushed 1.2 cm in (keeps the point count, so the ring is a strip)
+  const innerAll = insetPoly(outline, 0.012, kernel);
   const inner: P2[] = [];
   for (let i = 0; i < outline.length; i++) {
     const a = innerAll[i],
@@ -264,30 +316,8 @@ export function crabFlapGeometry(sex: CrabSex): THREE.BufferGeometry {
     for (let j = 0; j < k; j++) inner.push([a[0] + ((b[0] - a[0]) * j) / k, a[1] + ((b[1] - a[1]) * j) / k]);
   }
 
-  // drape onto the rendered shell
-  const shellMesh = new THREE.Mesh(shellGeometry(sex), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
-  const ray = new THREE.Raycaster();
-  const down = new THREE.Vector3(0, -1, 0);
-  const o = new THREE.Vector3();
-  const drape = (p: P2): [number, number, number] => {
-    ray.set(o.set(p[0], 0.5, p[1]), down);
-    const hit = ray.intersectObject(shellMesh, false)[0];
-    return [p[0], (hit ? hit.point.y : 0.03) + 0.004, p[1]];
-  };
-
-  const fill = male ? [1.0, 0.9, 0.7] : [0.86, 0.94, 1.0];
-  const edge = fill.map((c) => c * 0.25);
-  const verts: number[] = [];
-  const cols: number[] = [];
-  const tri = (a: P2, b: P2, c: P2, col: number[]) => {
-    // wind counter-clockwise seen from above (+y normal)
-    const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-    const pts = cross < 0 ? [a, b, c] : [a, c, b];
-    for (const p of pts) {
-      verts.push(...drape(p));
-      cols.push(col[0], col[1], col[2]);
-    }
-  };
+  const fill = MARK_KEEP;
+  const edge = MARK_EDGE;
   // outline strip
   const n = outer.length;
   for (let i = 0; i < n; i++) {
@@ -310,11 +340,7 @@ export function crabFlapGeometry(sex: CrabSex): THREE.BufferGeometry {
       }
     }
   }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-  g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
-  g.computeVertexNormals();
-  return g;
+  return finish();
 }
 
 export const SPECIES_COLOR: Record<string, number> = {
@@ -328,9 +354,26 @@ export const SPECIES_COLOR: Record<string, number> = {
 export function crabMaterial(color = 0xffffff): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, vertexColors: true, roughness: 0.3, metalness: 0 });
 }
-/** The apron marker (its colours are in the vertex colours); offset so it never z-fights the shell. */
+/**
+ * The apron marker (its colours are in the vertex colours); offset so it never z-fights the shell.
+ * Instanced, an undersize male's yellow chevron turns grey: the instance's scale is the crab's
+ * size, and undersize males are well below keepers (the landing squash keeps the volume under it).
+ */
 export function crabFlapMaterial(): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.42, metalness: 0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  const m = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.42, metalness: 0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader.replace(
+      '#include <color_vertex>',
+      `#include <color_vertex>
+      #if defined( USE_INSTANCING ) && defined( USE_COLOR )
+        // the yellow keeper fill only (not the outline, not the female's blue)
+        if (color.r > color.b + 0.3 && pow(abs(determinant(mat3(instanceMatrix))), 1.0 / 3.0) < ${SMALL_SCALE.toFixed(2)})
+          vColor.rgb = vec3(${MARK_SMALL.r.toFixed(4)}, ${MARK_SMALL.g.toFixed(4)}, ${MARK_SMALL.b.toFixed(4)});
+      #endif`,
+    );
+  };
+  m.customProgramCacheKey = () => 'crabFlap';
+  return m;
 }
 
 const kindMats = new Map<string, THREE.MeshStandardMaterial>();

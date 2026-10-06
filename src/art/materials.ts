@@ -269,7 +269,7 @@ export function paint(color: number, opts: MatOpts & { rough?: number; wear?: nu
 
 /** Glossy moulded toy plastic. */
 export function plastic(color: number, opts: MatOpts & { rough?: number } = {}): THREE.MeshStandardMaterial {
-  return cached(`plastic${color}_${opts.rough ?? ''}_${okey(opts)}`, () => common(new THREE.MeshStandardMaterial({ color, roughness: opts.rough ?? 0.34, metalness: 0 }), opts));
+  return cached(`plastic${color}_${opts.rough ?? ''}_${okey(opts)}`, () => common(new THREE.MeshStandardMaterial({ color, roughness: opts.rough ?? 0.24, metalness: 0 }), opts));
 }
 
 /**

@@ -243,8 +243,13 @@ buoys are flagged `noOverboard` or handled by their own systems.
 ## Performance notes
 - Sim + physics cost per 60 Hz step measured in headless Chromium: 0.5–0.9 ms in a full
   storm (all bots active, ~40 bodies). That leaves the frame budget to rendering.
-- **Rendering cost per tier:** sea grid 96/160/240 segments; snow 500/1200/2400; spray
-  pools 120/240/400; shadows only on High; one draw call each for the instanced crabs.
+- **Rendering cost per tier:** sea grid 96/128/240 segments; snow 500/1200/2400; spray
+  pools 120/240/400; shadows on Medium (1024, small casters and pot doors left out) and
+  High (2048); one draw call each for the instanced crabs. Every material, hidden storm
+  effects included, is compiled after the first frame (`Stage.precompile`).
+- **Draw calls** (`renderer.info.render.calls` after two frames, calm, default view):
+  Low 253, Medium 398, High 432 (Medium was 419: the crew, pots, wheelhouse and gantry still
+  cast; Low with a 512 shadow map measured 398, so Low stays shadowless).
 - **Quality tiers:** phones start on Low at DPR ≤ 1.5 and may climb to Medium. Auto quality
   steps down after 3 s above 20 ms per frame.
 - The headless tests render with SwiftShader (software). Their frame rates say nothing

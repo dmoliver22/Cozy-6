@@ -18,7 +18,8 @@ import { paint, wood, metal, rope, rubber, glass, glow, line3, meshGridTex, canv
 
 export const C = {
   hullRed: 0xc9573c,
-  boot: 0xf2e7cf,
+  /** dark boot-top at the waterline: the lacy sea collar reads against it */
+  boot: 0x2b2724,
   antifoul: 0x5b2523,
   stripe: 0xf2e7cf,
   cream: 0xf3ead8,
@@ -473,8 +474,8 @@ function hullTextures(): { map: THREE.CanvasTexture; bump: THREE.CanvasTexture }
 
 /**
  * The Puffin's hull paint: planked topsides (uv = metres along × metres of girth from the
- * gunwale), with a cream sheer stripe under the rail, a cream boot-top at the waterline and dark
- * antifouling below, all picked in the shader from object-space height so merging keeps it.
+ * gunwale), with a cream sheer stripe under the rail, a dark boot-top at the waterline (with a
+ * thin cream pinstripe above it) and dark antifouling below, all picked in the shader from object-space height so merging keeps it.
  */
 export function hullPaint(waterlineY: number): THREE.MeshStandardMaterial {
   return once(`hull${waterlineY}`, () => {
@@ -509,9 +510,9 @@ export function hullPaint(waterlineY: number): THREE.MeshStandardMaterial {
             float bootTop = uWL + 0.22;
             float bootBot = uWL - 0.03;
             tint = mix(tint, uBoot, 1.0 - smoothstep(bootTop - aa, bootTop + aa, vHullY));
-            // a thin dark pinstripe on top of the boot-top
+            // a thin cream pinstripe on top of the boot-top
             float pin = smoothstep(bootTop - aa, bootTop + aa, vHullY + 0.035) * (1.0 - smoothstep(bootTop - aa, bootTop + aa, vHullY));
-            tint = mix(tint, vec3(0.12, 0.1, 0.09), pin);
+            tint = mix(tint, uStripe, pin);
             tint = mix(tint, uBottom, 1.0 - smoothstep(bootBot - aa, bootBot + aa, vHullY));
             // grime near the waterline
             tint *= mix(1.0, 0.86, (1.0 - smoothstep(uWL + 0.15, uWL + 0.7, vHullY)) * step(bootTop, vHullY));
@@ -617,32 +618,44 @@ function netAlphaTex(): THREE.CanvasTexture {
 }
 let _netAlpha: THREE.CanvasTexture | null = null;
 
+/** Solid webbing parts with this uv.x or less take webbingMat's `solidColor` (the alpha map repeats). */
+export const WEB_SOLID_U = -7.875;
+
 /**
- * Orange (or any) webbing cutout from the knotted-net alpha: crisp edges up close (alpha to coverage
- * smooths them where MSAA is on, and they stay crisp where it is not); far away it turns into an
- * even partial coverage (no screen-door pattern), so it reads as an orange netting funnel.
+ * Webbing cutout from the knotted-net alpha: crisp edges up close (alpha to coverage smooths them
+ * where MSAA is on, and they stay crisp where it is not); far away it turns into an even partial
+ * coverage (no screen-door pattern), so it reads as a netting funnel. With `solidColor`, solid
+ * parts whose uvs sit at u = WEB_SOLID_U (a knot, alpha 1) take that colour instead: two colours
+ * in one material, so a merged pot keeps one webbing draw call.
  */
-export function webbingMat(color: number): THREE.MeshStandardMaterial {
-  return once(`webbing${color}`, () => {
+export function webbingMat(color: number, solidColor?: number): THREE.MeshStandardMaterial {
+  return once(`webbing${color}_${solidColor ?? ''}`, () => {
     _netAlpha ??= netAlphaTex();
     const m = new THREE.MeshStandardMaterial({ color, roughness: 0.75, metalness: 0, alphaMap: _netAlpha, alphaTest: 0.5, side: THREE.DoubleSide });
     m.alphaToCoverage = true;
+    const solid = solidColor !== undefined ? new THREE.Color(solidColor) : null;
     m.onBeforeCompile = (sh) => {
-      sh.fragmentShader = sh.fragmentShader.replace(
-        '#include <alphamap_fragment>',
-        `#include <alphamap_fragment>
+      if (solid) sh.uniforms.uWebSolid = { value: solid };
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>\n${solid ? '#define WEB_SOLID\nuniform vec3 uWebSolid;' : ''}`)
+        .replace(
+          '#include <alphamap_fragment>',
+          `#include <alphamap_fragment>
         #ifdef USE_ALPHAMAP
         {
           float a = diffuseColor.a;
           float tpp = length(fwidth(vAlphaMapUv)) * 128.0;
           float sharp = clamp((a - 0.5) / max(fwidth(a), 1e-4) * 0.5 + 0.5, 0.0, 1.0);
-          // far away: 65% coverage (a soft see-through orange where MSAA is on, solid where not)
+          // far away: 65% coverage (a soft see-through netting where MSAA is on, solid where not)
           diffuseColor.a = mix(sharp, 0.68, smoothstep(2.5, 5.5, tpp));
+          #ifdef WEB_SOLID
+            if (vAlphaMapUv.x < ${(WEB_SOLID_U + 1).toFixed(1)}) diffuseColor = vec4(uWebSolid, 1.0);
+          #endif
         }
         #endif`,
-      );
+        );
     };
-    m.customProgramCacheKey = () => 'webbingA2C';
+    m.customProgramCacheKey = () => (solid ? 'webbingA2C_solid' : 'webbingA2C');
     return m;
   });
 }
@@ -764,30 +777,33 @@ export const K = {
 };
 
 // ---------------------------------------------------------------------------------------------
-// more bespoke surfaces: table steel, stove pipe, window glass, hazard tape, rust streaks
+// more bespoke surfaces: sorting-table top, stove pipe, window glass, hazard tape, rust streaks
 
-/** Brushed stainless sorting-table top: grain along u, a few scratches, darker wet patches. */
-export function tableSteelMat(): THREE.MeshStandardMaterial {
-  return once('tableSteel', () => {
+/**
+ * Sorting-table top: a scrubbed, warm tan board (the red, blue and orange crabs and their yellow
+ * and blue markers read against it), grain along u, knife scratches, darker wet patches.
+ */
+export function sortTableTopMat(): THREE.MeshStandardMaterial {
+  return once('sortTableTop', () => {
     const r = rng(9091);
     const N = 512;
     const wet: [number, number, number, number][] = [];
     for (let i = 0; i < 5; i++) wet.push([60 + r() * (N - 120), 60 + r() * (N - 120), 22 + r() * 40, 12 + r() * 22]);
     const map = canvasTexture(N, N, (g) => {
-      g.fillStyle = '#b3babe';
+      g.fillStyle = '#c8b28a';
       g.fillRect(0, 0, N, N);
-      // brushed grain
+      // scrubbed grain
       for (let i = 0; i < 900; i++) {
         const y = r() * N;
-        g.fillStyle = r() < 0.5 ? `rgba(255,255,255,${0.04 + r() * 0.08})` : `rgba(70,78,84,${0.03 + r() * 0.07})`;
+        g.fillStyle = r() < 0.5 ? `rgba(255,255,255,${0.04 + r() * 0.08})` : `rgba(110,86,58,${0.03 + r() * 0.07})`;
         g.fillRect(r() * N * 0.3 - 40, y, N * (0.4 + r() * 0.8), 1);
       }
       // wet patches and a grimy rim
       for (const [x, y, rx, ry] of wet) {
         const grd = g.createRadialGradient(x, y, 0, x, y, rx);
-        grd.addColorStop(0, 'rgba(80,92,100,0.16)');
-        grd.addColorStop(0.6, 'rgba(80,92,100,0.1)');
-        grd.addColorStop(1, 'rgba(80,92,100,0)');
+        grd.addColorStop(0, 'rgba(110,88,60,0.2)');
+        grd.addColorStop(0.6, 'rgba(110,88,60,0.12)');
+        grd.addColorStop(1, 'rgba(110,88,60,0)');
         g.fillStyle = grd;
         g.beginPath();
         g.ellipse(x, y, rx, ry, r() * 3, 0, Math.PI * 2);
@@ -834,7 +850,7 @@ export function tableSteelMat(): THREE.MeshStandardMaterial {
       }
     });
     rough.colorSpace = THREE.NoColorSpace;
-    return new THREE.MeshStandardMaterial({ color: 0xe4e8ea, map, roughnessMap: rough, roughness: 0.9, metalness: 0.5 });
+    return new THREE.MeshStandardMaterial({ color: 0xffffff, map, roughnessMap: rough, roughness: 0.85, metalness: 0 });
   });
 }
 

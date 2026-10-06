@@ -17,6 +17,7 @@ attribute vec3 aVel;
 attribute vec2 aMeta; // seed, kind (0 droplet, 1 mist, 2 big soft puff)
 uniform float uScale;
 uniform vec2 uViewport;
+uniform float uMaxPx; // droplet size cap: 6 px at the drawing buffer's pixel ratio
 uniform vec3 uColor;
 uniform vec3 uSunDir;
 uniform vec3 uSun;
@@ -39,8 +40,12 @@ void main() {
   float el = aMeta.y > 0.5 ? 1.0 : 1.0 + clamp(len / max(size * 0.6, 1.0), 0.0, 2.2);
   vec2 dir = len > 1e-3 ? dpx / len : vec2(1.0, 0.0);
   vStretch = vec3(dir.x, -dir.y, el);
-  // never smaller than 2.5 px, or droplets alias into single-pixel dots
-  gl_PointSize = max(size * el, 2.5);
+  // never smaller than 2.5 px, or droplets alias into single-pixel dots; never bigger than a few
+  // pixels either (a droplet near the camera must not become a white blob). Mist may grow more:
+  // it is soft and faint, the haze over a splash
+  gl_PointSize = clamp(size * el, 2.5, max(2.5, uMaxPx * (aMeta.y > 0.5 ? 4.0 : 1.0)));
+  // fade out within 6 m of the camera (spray drifting past the lens in first person)
+  vAlpha *= smoothstep(2.0, 6.0, -mv.z);
   gl_Position = c1;
   // light: cool sky fill, then the low sun. Droplets lit from the front or glowing with the
   // sun behind them (forward scattering) take the sun's warm colour; mist a little less.
@@ -153,6 +158,7 @@ export class ParticleCloud {
         uColor: { value: new THREE.Color(color) },
         uScale: { value: pixelScale },
         uViewport: { value: new THREE.Vector2(1280, 720) },
+        uMaxPx: { value: 6 },
         uSunDir: { value: seaLight.sunDir },
         uSun: { value: seaLight.sun },
         uSunTint: { value: seaLight.sunTint },
@@ -174,9 +180,10 @@ export class ParticleCloud {
     this.mat.uniforms.uScale.value = s;
   }
 
-  /** Drawing-buffer size in pixels (for the motion streaks). */
+  /** Drawing-buffer size in pixels (for the motion streaks and the size cap). */
   setViewport(w: number, h: number): void {
     (this.mat.uniforms.uViewport.value as THREE.Vector2).set(w, h);
+    this.mat.uniforms.uMaxPx.value = 6 * Math.max(1, h / Math.max(1, window.innerHeight));
   }
 
   /** `kind` 0 = droplet, 1 = mist puff, 2 = big soft puff (faint haze over a splash). */

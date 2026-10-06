@@ -59,8 +59,10 @@ vec3 skyColor(vec3 dir) {
   float lowSky = 1.0 - smoothstep(0.0, 0.32, e);
   float halo = min(pow(sd, 12.0) * 0.14 + pow(sd, 128.0) * 0.45 + pow(sd, 1400.0) * 1.6, 2.2);
   col += uGlow * (pow(sunSide, 4.0) * lowSky * 0.32 + halo) * uSunAmt;
-  // horizon haze matches the fog so the sea melts into the sky
-  col = mix(col, uHaze, (1.0 - smoothstep(-0.01, 0.09, e)) * 0.9);
+  // horizon haze matches the sea's haze so the sea melts into the sky: the fog's warmth toward
+  // the sun, slate teal away from it (same tint as seaShader.ts)
+  vec3 haze = mix(uHaze * vec3(0.42, 0.62, 0.72), uHaze, smoothstep(0.1, 0.95, sunSide));
+  col = mix(col, haze, (1.0 - smoothstep(-0.01, 0.09, e)) * 0.9);
 
   // clouds on a flat layer (perspective packs them into bands near the horizon)
   vec2 cp = dir.xz / (max(e, 0.0) + 0.09);
@@ -103,6 +105,8 @@ void main() {
   gl_FragColor = vec4(skyColor(vDir), 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
+  // ±0.5/255 dither: the smooth gradient doesn't band on Low, which writes 8 bits straight out
+  gl_FragColor.rgb += (skHash(gl_FragCoord.xy) - 0.5) / 255.0;
 }`;
 
 const EQUI_VERT = /* glsl */ `

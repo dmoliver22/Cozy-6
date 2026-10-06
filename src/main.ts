@@ -1,7 +1,8 @@
 import './ui/style.css';
-import { applyUrlOverrides } from './config';
+import { applyUrlOverrides, config } from './config';
 import { initPhysics } from './core/physicsInit';
 import { Game } from './game/game';
+import { ObjectiveBeacon } from './game/beacon';
 import { events } from './core/events';
 import { showTitle, showChart } from './ui/title';
 
@@ -12,6 +13,12 @@ async function boot() {
   (window as unknown as { __physics: string }).__physics = physics;
   const app = document.getElementById('app')!;
   const game = new Game(app);
+  // the arrow over the next thing to do (reads game state, draws through the stage)
+  new ObjectiveBeacon(game);
+  // phones frame the working deck closer (overrides the Game's own phone default)
+  if (game.stage.isPhone) game.rig.zoom = config.camera.overhead.phoneZoom;
+  // compile the hidden storm effects' shaders now rather than when the storm arrives
+  void game.stage.precompile();
   (window as unknown as { __game: Game; __params: unknown }).__game = game;
   (window as unknown as { __params: unknown }).__params = params;
   (window as unknown as { __events: unknown }).__events = events;

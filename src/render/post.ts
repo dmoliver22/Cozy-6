@@ -2,9 +2,9 @@
  * Post-processing for the diorama look (Medium and High; Low renders straight to the canvas).
  *
  *   scene → HDR target (HalfFloat, MSAA on High)
- *         → tilt-shift: separable 13-tap gaussian at half resolution, radius scaled per pixel by
- *           the distance from a horizontal focus band (centred on the boat, reaching down past
- *           the waterline). Taps are weighted up by how far they exceed 1.0 in luma, so sun
+ *         → tilt-shift: separable 13-tap gaussian at half resolution (quarter when the radius is
+ *           wide), radius scaled per pixel by the distance from a horizontal focus band (centred
+ *           on the boat, reaching down past the waterline). Taps are weighted up by how far they exceed 1.0 in luma, so sun
  *           glints open into small bright bokeh discs instead of averaging into grey smears.
  *           Full strength above the band (the far sea), weaker below it (the near water).
  *         → bloom (High): soft-threshold prefilter + 13-tap mip chain down to 1/32, tent upsample
@@ -241,6 +241,8 @@ class Chain {
   readonly bloom: THREE.WebGLRenderTarget[] = [];
   w = 1;
   h = 1;
+  /** tilt targets at quarter resolution (wide blur radius) instead of half */
+  quarter = false;
 
   constructor(
     private type: THREE.TextureDataType,
@@ -259,15 +261,24 @@ class Chain {
     this.scene.dispose(); // re-created at the new sample count on next use
   }
 
-  setSize(w: number, h: number): void {
+  /**
+   * `blurFrac` is the tilt blur radius as a fraction of the height. The 13-tap kernel spreads over
+   * the radius, so once the radius passes ~6 half-resolution texels its taps sit more than 2 texels
+   * apart and a bright glint shows as a row of square copies: then the tilt targets drop to
+   * quarter resolution (DPR >= 1.5, big windows, Medium phones), where the taps overlap again.
+   */
+  setSize(w: number, h: number, blurFrac: number): void {
     w = Math.max(1, Math.floor(w));
     h = Math.max(1, Math.floor(h));
-    if (w === this.w && h === this.h) return;
+    const quarter = (h * blurFrac) / 2 > 6;
+    if (w === this.w && h === this.h && quarter === this.quarter) return;
     this.w = w;
     this.h = h;
+    this.quarter = quarter;
     this.scene.setSize(w, h);
-    const hw = Math.max(1, w >> 1),
-      hh = Math.max(1, h >> 1);
+    const sh = quarter ? 2 : 1;
+    const hw = Math.max(1, w >> sh),
+      hh = Math.max(1, h >> sh);
     this.tiltA.setSize(hw, hh);
     this.tiltB.setSize(hw, hh);
     for (let i = 0; i < BLOOM_LEVELS; i++) this.bloom[i].setSize(Math.max(1, w >> (i + 1)), Math.max(1, h >> (i + 1)));
@@ -336,6 +347,11 @@ export class Post {
     return this.tier.enabled;
   }
 
+  /** The target the scene renders into (null = the canvas): programs are compiled per target kind. */
+  get sceneTarget(): THREE.WebGLRenderTarget | null {
+    return this.tier.enabled ? this.main.scene : null;
+  }
+
   configure(tier: PostTier): void {
     this.tier = { ...tier };
     this.main.setSamples(tier.enabled ? tier.msaa : 0);
@@ -345,7 +361,7 @@ export class Post {
 
   /** Drawing-buffer size in pixels. */
   setSize(w: number, h: number): void {
-    this.main.setSize(w, h);
+    this.main.setSize(w, h, this.blurFrac);
   }
 
   /** Render `scene` through the pipeline into `out` (null = the canvas). */
@@ -359,7 +375,7 @@ export class Post {
    */
   async capture(scene: THREE.Scene, camera: THREE.Camera, look: Look, view: PostView, w: number, h: number): Promise<Uint8Array> {
     if (!this.photo) this.photo = new Chain(this.hdrType, 4);
-    this.photo.setSize(w, h);
+    this.photo.setSize(w, h, this.blurFrac);
     if (!this.photoOut || this.photoOut.width !== w || this.photoOut.height !== h) {
       this.photoOut?.dispose();
       this.photoOut = new THREE.WebGLRenderTarget(w, h, { type: THREE.UnsignedByteType, depthBuffer: false, generateMipmaps: false });
@@ -388,7 +404,7 @@ export class Post {
       u.uFocusY.value = view.focusY;
       u.uFocusHalf.value = view.focusHalf;
       u.uFocusSoft.value = this.focusSoft;
-      u.uTilt.value = Math.min(1.5, tiltAmt);
+      u.uTilt.value = Math.min(1.0, tiltAmt);
       u.uBelow.value = g.tiltBelow;
       const rad = this.blurFrac;
       u.tIn.value = ch.scene.texture;
