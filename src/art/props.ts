@@ -17,7 +17,7 @@ import { paint, wood, metal, rope, rubber, glass, glow, line3, meshGridTex, canv
 // colours
 
 export const C = {
-  hullRed: 0xb5402d,
+  hullRed: 0xc9573c,
   boot: 0xf2e7cf,
   antifoul: 0x5b2523,
   stripe: 0xf2e7cf,
@@ -39,8 +39,42 @@ export const C = {
   manila: 0xe7cf9c,
   greenRope: 0x5fae8e,
   blueBarrel: 0x2f6fb0,
-  net: 0x3f7d5a,
+  net: 0x5f9058,
+  /** sun-faded off-white for domes, rafts and scanners (pure white blooms under the post pass) */
+  offWhite: 0xe8e2d4,
+  tyre: 0x343434,
+  tyreRim: 0x8f8d86,
+  galv: 0x9aa3a8,
+  navy: 0x22344a,
+  rigging: 0x3a3a3a,
 } as const;
+
+// ---------------------------------------------------------------------------------------------
+// detail tier
+
+/**
+ * Phones start on the Low tier (no MSAA, no shadow maps): the boat builds with fewer segments on
+ * round clutter and skips some fine detail. Mirrors the first-tier rule in Stage.
+ */
+export function isLowTier(): boolean {
+  try {
+    return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+  } catch {
+    return false;
+  }
+}
+let lowSeg = false;
+/** While building for Low, clutter builders use about half their radial segments. */
+export function setLowDetail(on: boolean): void {
+  lowSeg = on;
+}
+export function lowDetail(): boolean {
+  return lowSeg;
+}
+/** Segment count for round clutter: halved on Low. */
+export function sg(n: number, min = 3): number {
+  return lowSeg ? Math.max(min, Math.round(n / 2)) : n;
+}
 
 // ---------------------------------------------------------------------------------------------
 // geometry
@@ -150,8 +184,9 @@ function prep<T extends THREE.Mesh>(m: T, cast = true): T {
   return m;
 }
 
-/** Chamfered ("rounded") box mesh. */
+/** Chamfered ("rounded") box mesh. On Low, thin parts lose the chamfer (12 triangles, not 44). */
 export function cbox(w: number, h: number, d: number, mat: THREE.Material, r = 0.03, x = 0, y = 0, z = 0): THREE.Mesh {
+  if (lowSeg && Math.min(w, h, d) < 0.1) r = 0;
   const m = prep(new THREE.Mesh(cboxGeo(w, h, d, r), mat));
   m.position.set(x, y, z);
   return m;
@@ -169,6 +204,7 @@ export function cylGeo(rt: number, rb: number, h: number, seg = 10, open = false
   return g;
 }
 export function tube(rt: number, rb: number, h: number, mat: THREE.Material, seg = 10, x = 0, y = 0, z = 0): THREE.Mesh {
+  if (lowSeg && seg > 8) seg = Math.max(8, Math.round(seg * 0.6));
   const m = prep(new THREE.Mesh(cylGeo(rt, rb, h, seg), mat));
   m.position.set(x, y, z);
   return m;
@@ -188,6 +224,10 @@ export function tubeZ(r: number, len: number, mat: THREE.Material, seg = 10, x =
 
 const torCache = new Map<string, THREE.BufferGeometry>();
 export function ring(r: number, t: number, mat: THREE.Material, radial = 6, tubular = 16, arc = Math.PI * 2): THREE.Mesh {
+  if (lowSeg) {
+    radial = Math.max(3, Math.round(radial * 0.6));
+    if (tubular > 10) tubular = Math.max(10, Math.round(tubular * 0.6));
+  }
   const key = `${r}_${t}_${radial}_${tubular}_${arc}`;
   let g = torCache.get(key);
   if (!g) {
@@ -199,6 +239,7 @@ export function ring(r: number, t: number, mat: THREE.Material, radial = 6, tubu
 
 const sphCache = new Map<string, THREE.BufferGeometry>();
 export function ball(r: number, mat: THREE.Material, seg = 10, x = 0, y = 0, z = 0): THREE.Mesh {
+  if (lowSeg && seg > 8) seg = Math.max(8, Math.round(seg * 0.6));
   const key = `${r}_${seg}`;
   let g = sphCache.get(key);
   if (!g) {
@@ -358,9 +399,9 @@ function hullTextures(): { map: THREE.CanvasTexture; bump: THREE.CanvasTexture }
       for (let j = 0; j < 1; j++) {
         const x = Math.floor(r() * Wt);
         js.push(x);
-        g.fillStyle = 'rgba(40,30,28,0.32)';
+        g.fillStyle = 'rgba(40,30,28,0.18)';
         g.fillRect(x, s * sh, 2, sh);
-        g.fillStyle = 'rgba(40,30,28,0.35)';
+        g.fillStyle = 'rgba(40,30,28,0.25)';
         for (const dy of [0.3, 0.7]) {
           g.beginPath();
           g.arc(x - 6, s * sh + dy * sh, 1.6, 0, Math.PI * 2);
@@ -370,11 +411,11 @@ function hullTextures(): { map: THREE.CanvasTexture; bump: THREE.CanvasTexture }
       }
       joints.push(js);
       // seam: dark caulk line then a soft highlight
-      g.fillStyle = 'rgba(35,25,22,0.6)';
+      g.fillStyle = 'rgba(35,25,22,0.3)';
       g.fillRect(0, s * sh, Wt, 3);
-      g.fillStyle = 'rgba(255,255,255,0.16)';
+      g.fillStyle = 'rgba(255,250,240,0.2)';
       g.fillRect(0, s * sh + 3, Wt, 2);
-      g.fillStyle = 'rgba(0,0,0,0.05)';
+      g.fillStyle = 'rgba(0,0,0,0.03)';
       g.fillRect(0, s * sh + sh - 8, Wt, 8);
     }
     // weathering: worn paint scuffs (lighter), rust and grime streaks running down
@@ -392,13 +433,13 @@ function hullTextures(): { map: THREE.CanvasTexture; bump: THREE.CanvasTexture }
       const len = 40 + r() * 200;
       const grd = g.createLinearGradient(0, y, 0, y + len);
       const rust = r() < 0.6;
-      grd.addColorStop(0, rust ? 'rgba(120,58,28,0.45)' : 'rgba(40,35,30,0.3)');
+      grd.addColorStop(0, rust ? 'rgba(120,58,28,0.32)' : 'rgba(40,35,30,0.18)');
       grd.addColorStop(1, 'rgba(120,58,28,0)');
       g.fillStyle = grd;
       g.fillRect(x, y, 2 + r() * 5, len);
     }
     for (let i = 0; i < 30; i++) {
-      g.fillStyle = `rgba(30,22,18,${0.04 + r() * 0.05})`;
+      g.fillStyle = `rgba(30,22,18,${0.02 + r() * 0.03})`;
       g.beginPath();
       g.ellipse(r() * Wt, r() * Ht, 20 + r() * 70, 6 + r() * 20, 0, 0, Math.PI * 2);
       g.fill();
@@ -408,15 +449,15 @@ function hullTextures(): { map: THREE.CanvasTexture; bump: THREE.CanvasTexture }
     g.fillStyle = '#b4b4b4';
     g.fillRect(0, 0, Wt, Ht);
     for (let s = 0; s < strakes; s++) {
-      // each plank slightly crowned: lighter in the middle
+      // each plank slightly crowned: lighter in the middle (soft, so the grooves stay shallow)
       const grd = g.createLinearGradient(0, s * sh, 0, s * sh + sh);
-      grd.addColorStop(0, '#8a8a8a');
-      grd.addColorStop(0.25, '#c8c8c8');
-      grd.addColorStop(0.7, '#c0c0c0');
-      grd.addColorStop(1, '#7a7a7a');
+      grd.addColorStop(0, '#9c9c9c');
+      grd.addColorStop(0.25, '#c2c2c2');
+      grd.addColorStop(0.7, '#bebebe');
+      grd.addColorStop(1, '#949494');
       g.fillStyle = grd;
       g.fillRect(0, s * sh, Wt, sh);
-      g.fillStyle = '#202020';
+      g.fillStyle = '#5a5a5a';
       g.fillRect(0, s * sh, Wt, 3);
       for (const x of joints[s] ?? []) g.fillRect(x, s * sh, 2, sh);
     }
@@ -438,7 +479,7 @@ function hullTextures(): { map: THREE.CanvasTexture; bump: THREE.CanvasTexture }
 export function hullPaint(waterlineY: number): THREE.MeshStandardMaterial {
   return once(`hull${waterlineY}`, () => {
     const { map, bump } = hullTextures();
-    const m = new THREE.MeshStandardMaterial({ color: 0xffffff, map, bumpMap: bump, bumpScale: 2.2, roughness: 0.6, metalness: 0 });
+    const m = new THREE.MeshStandardMaterial({ color: 0xffffff, map, bumpMap: bump, bumpScale: 1.1, roughness: 0.58, metalness: 0 });
     const uni = {
       uTop: { value: new THREE.Color(C.hullRed) },
       uBoot: { value: new THREE.Color(C.boot) },
@@ -462,7 +503,7 @@ export function hullPaint(waterlineY: number): THREE.MeshStandardMaterial {
             #ifdef USE_MAP
               float girth = vMapUv.y * ${HULL_TEX_V.toFixed(2)};
               float ga = fwidth(girth) + 1e-4;
-              float stripe = smoothstep(0.04 - ga, 0.04 + ga, girth) * (1.0 - smoothstep(0.2 - ga, 0.2 + ga, girth));
+              float stripe = smoothstep(0.04 - ga, 0.04 + ga, girth) * (1.0 - smoothstep(0.36 - ga, 0.36 + ga, girth));
               tint = mix(tint, uStripe, stripe);
             #endif
             float bootTop = uWL + 0.22;
@@ -473,7 +514,7 @@ export function hullPaint(waterlineY: number): THREE.MeshStandardMaterial {
             tint = mix(tint, vec3(0.12, 0.1, 0.09), pin);
             tint = mix(tint, uBottom, 1.0 - smoothstep(bootBot - aa, bootBot + aa, vHullY));
             // grime near the waterline
-            tint *= mix(1.0, 0.82, (1.0 - smoothstep(uWL + 0.15, uWL + 0.7, vHullY)) * step(bootTop, vHullY));
+            tint *= mix(1.0, 0.86, (1.0 - smoothstep(uWL + 0.15, uWL + 0.7, vHullY)) * step(bootTop, vHullY));
             diffuseColor.rgb *= tint;
           }`,
         );
@@ -492,37 +533,51 @@ export function brightCopy<T extends THREE.MeshStandardMaterial>(src: T, r: numb
   return m;
 }
 
-/** Wire-mesh panel cutout: alpha from meshGridTex, ordered-dither alpha test so the fine mesh
- * reads as a crisp grid up close and a screen-door veil far away (no sorting, no vanishing
- * mip levels, no MSAA needed). UVs are expected in "cells". */
-export function meshPanelMat(color: number, cells = 8, opts: { rough?: number; metalness?: number } = {}): THREE.MeshStandardMaterial {
-  return once(`meshPanel${color}_${cells}_${opts.rough ?? ''}_${opts.metalness ?? ''}`, () => {
+/**
+ * Galvanised wire-mesh panel, drawn procedurally (no texture, no dither, no MSAA needed). Up close
+ * the grid is analytically anti-aliased thin wire; as the cells shrink toward a few pixels it eases
+ * into a semi-opaque tinted panel, so a stack of pots reads as stacked boxes instead of moire.
+ * Blended (no depth write, single pass): the catch and bait inside show through. UVs are expected
+ * in "uv units" where one unit holds `cells` cells. `panelOnly` skips the grid (Low tier).
+ */
+export function meshPanelMat(
+  color: number,
+  cells = 8,
+  opts: { rough?: number; metalness?: number; wire?: number; panel?: number; panelOnly?: boolean } = {},
+): THREE.MeshStandardMaterial {
+  const wire = (opts.wire ?? 0.065).toFixed(3);
+  const panel = (opts.panel ?? 0.45).toFixed(3);
+  const only = opts.panelOnly ? 1 : 0;
+  return once(`meshPanel${color}_${cells}_${opts.rough ?? ''}_${opts.metalness ?? ''}_${wire}_${panel}_${only}`, () => {
     const m = new THREE.MeshStandardMaterial({
       color,
       roughness: opts.rough ?? 0.5,
-      metalness: opts.metalness ?? 0.35,
-      alphaMap: meshGridTex(cells),
-      alphaTest: 0.5,
+      metalness: opts.metalness ?? 0.3,
+      transparent: true,
+      depthWrite: false,
       side: THREE.DoubleSide,
     });
+    m.forceSinglePass = true;
     m.onBeforeCompile = (sh) => {
-      sh.fragmentShader = sh.fragmentShader.replace(
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec2 vWireCell;')
+        .replace('#include <uv_vertex>', `#include <uv_vertex>\nvWireCell = uv * ${cells.toFixed(1)};`);
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec2 vWireCell;').replace(
         '#include <alphatest_fragment>',
-        `{
-          float a = diffuseColor.a;
-          #ifdef USE_ALPHAMAP
-            float tpp = length(fwidth(vAlphaMapUv)) * 256.0;
-            float sharp = clamp((a - 0.5) / max(fwidth(a), 1e-4) + 0.5, 0.0, 1.0);
-            a = mix(sharp, a * 1.25, smoothstep(0.8, 2.0, tpp));
-          #endif
-          const float BAYER[16] = float[16](0.,8.,2.,10.,12.,4.,14.,6.,3.,11.,1.,9.,15.,7.,13.,5.);
-          int bi = int(mod(gl_FragCoord.y, 4.0)) * 4 + int(mod(gl_FragCoord.x, 4.0));
-          if (a < (BAYER[bi] + 0.5) / 16.0) discard;
-          diffuseColor.a = 1.0;
+        only
+          ? `diffuseColor.a *= ${panel};`
+          : `{
+          vec2 fw = fwidth(vWireCell);
+          vec2 d = abs(fract(vWireCell + 0.5) - 0.5);
+          vec2 l = 1.0 - smoothstep(vec2(${wire}) - fw * 0.7, vec2(${wire}) + fw * 0.7, d);
+          float cov = max(l.x, l.y);
+          float far = smoothstep(0.14, 0.4, max(fw.x, fw.y));
+          diffuseColor.a *= mix(cov, ${panel}, far);
+          if (diffuseColor.a < 0.004) discard;
         }`,
       );
     };
-    m.customProgramCacheKey = () => 'meshPanelDither';
+    m.customProgramCacheKey = () => `wirePanel_${cells}_${wire}_${panel}_${only}`;
     return m;
   });
 }
@@ -562,29 +617,32 @@ function netAlphaTex(): THREE.CanvasTexture {
 }
 let _netAlpha: THREE.CanvasTexture | null = null;
 
-/** Orange (or any) webbing: dithered cutout like meshPanelMat but with the knotted net. */
+/**
+ * Orange (or any) webbing cutout from the knotted-net alpha: crisp edges up close (alpha to coverage
+ * smooths them where MSAA is on, and they stay crisp where it is not); far away it turns into an
+ * even partial coverage (no screen-door pattern), so it reads as an orange netting funnel.
+ */
 export function webbingMat(color: number): THREE.MeshStandardMaterial {
   return once(`webbing${color}`, () => {
     _netAlpha ??= netAlphaTex();
     const m = new THREE.MeshStandardMaterial({ color, roughness: 0.75, metalness: 0, alphaMap: _netAlpha, alphaTest: 0.5, side: THREE.DoubleSide });
+    m.alphaToCoverage = true;
     m.onBeforeCompile = (sh) => {
       sh.fragmentShader = sh.fragmentShader.replace(
-        '#include <alphatest_fragment>',
-        `{
+        '#include <alphamap_fragment>',
+        `#include <alphamap_fragment>
+        #ifdef USE_ALPHAMAP
+        {
           float a = diffuseColor.a;
-          #ifdef USE_ALPHAMAP
-            float tpp = length(fwidth(vAlphaMapUv)) * 128.0;
-            float sharp = clamp((a - 0.5) / max(fwidth(a), 1e-4) + 0.5, 0.0, 1.0);
-            a = mix(sharp, a * 1.3, smoothstep(0.8, 2.0, tpp));
-          #endif
-          const float BAYER[16] = float[16](0.,8.,2.,10.,12.,4.,14.,6.,3.,11.,1.,9.,15.,7.,13.,5.);
-          int bi = int(mod(gl_FragCoord.y, 4.0)) * 4 + int(mod(gl_FragCoord.x, 4.0));
-          if (a < (BAYER[bi] + 0.5) / 16.0) discard;
-          diffuseColor.a = 1.0;
-        }`,
+          float tpp = length(fwidth(vAlphaMapUv)) * 128.0;
+          float sharp = clamp((a - 0.5) / max(fwidth(a), 1e-4) * 0.5 + 0.5, 0.0, 1.0);
+          // far away: 65% coverage (a soft see-through orange where MSAA is on, solid where not)
+          diffuseColor.a = mix(sharp, 0.68, smoothstep(2.5, 5.5, tpp));
+        }
+        #endif`,
       );
     };
-    m.customProgramCacheKey = () => 'webbingDither';
+    m.customProgramCacheKey = () => 'webbingA2C';
     return m;
   });
 }
@@ -686,7 +744,7 @@ export const K = {
   steel: () => metal(C.steel, { rough: 0.36, metalness: 0.65 }),
   brass: () => metal(C.brass, { rough: 0.3, metalness: 0.85 }),
   machine: () => paint(C.machine, { rough: 0.5 }),
-  gear: () => paint(C.gearOrange, { rough: 0.48 }),
+  gear: () => paint(C.gearOrange, { rough: 0.66 }),
   cream: () => paint(C.cream, { rough: 0.5 }),
   varnish: () => wood(C.varnish, { plankWidth: 0.12, along: 'z', weathered: false, rough: 0.42 }),
   darkWood: () => wood(C.darkWood, { plankWidth: 0.14, along: 'x', weathered: true, rough: 0.6 }),
@@ -696,7 +754,210 @@ export const K = {
   rubber: () => rubber(C.rubber),
   net: () => netPileMat(C.net),
   glass: () => glass(0xc9d9a8, 0x000000, 0),
+  /** sun-faded tyre rubber, a touch lighter than black so the fenders don't read as holes */
+  tyre: () => rubber(C.tyre),
+  /** standing rigging: dark grey wire, not black */
+  rigging: () => paint(C.rigging, { rough: 0.55, wear: 0 }),
+  /** the launch stand: dark navy machinery paint (keeps it apart from the teal tank) */
+  navy: () => paint(C.navy, { rough: 0.55 }),
+  galv: () => metal(C.galv, { rough: 0.45, metalness: 0.55 }),
 };
+
+// ---------------------------------------------------------------------------------------------
+// more bespoke surfaces: table steel, stove pipe, window glass, hazard tape, rust streaks
+
+/** Brushed stainless sorting-table top: grain along u, a few scratches, darker wet patches. */
+export function tableSteelMat(): THREE.MeshStandardMaterial {
+  return once('tableSteel', () => {
+    const r = rng(9091);
+    const N = 512;
+    const wet: [number, number, number, number][] = [];
+    for (let i = 0; i < 5; i++) wet.push([60 + r() * (N - 120), 60 + r() * (N - 120), 22 + r() * 40, 12 + r() * 22]);
+    const map = canvasTexture(N, N, (g) => {
+      g.fillStyle = '#b3babe';
+      g.fillRect(0, 0, N, N);
+      // brushed grain
+      for (let i = 0; i < 900; i++) {
+        const y = r() * N;
+        g.fillStyle = r() < 0.5 ? `rgba(255,255,255,${0.04 + r() * 0.08})` : `rgba(70,78,84,${0.03 + r() * 0.07})`;
+        g.fillRect(r() * N * 0.3 - 40, y, N * (0.4 + r() * 0.8), 1);
+      }
+      // wet patches and a grimy rim
+      for (const [x, y, rx, ry] of wet) {
+        const grd = g.createRadialGradient(x, y, 0, x, y, rx);
+        grd.addColorStop(0, 'rgba(80,92,100,0.16)');
+        grd.addColorStop(0.6, 'rgba(80,92,100,0.1)');
+        grd.addColorStop(1, 'rgba(80,92,100,0)');
+        g.fillStyle = grd;
+        g.beginPath();
+        g.ellipse(x, y, rx, ry, r() * 3, 0, Math.PI * 2);
+        g.fill();
+      }
+      const edge = g.createLinearGradient(0, 0, 0, N);
+      edge.addColorStop(0, 'rgba(60,55,50,0.18)');
+      edge.addColorStop(0.06, 'rgba(60,55,50,0)');
+      edge.addColorStop(0.94, 'rgba(60,55,50,0)');
+      edge.addColorStop(1, 'rgba(60,55,50,0.18)');
+      g.fillStyle = edge;
+      g.fillRect(0, 0, N, N);
+      // scratches: bright hairlines with a dark side
+      for (let i = 0; i < 70; i++) {
+        const x = r() * N,
+          y = r() * N,
+          a = (r() - 0.5) * 1.2 + (r() < 0.5 ? 0 : Math.PI / 2),
+          len = 10 + r() * 60;
+        g.strokeStyle = `rgba(255,255,255,${0.25 + r() * 0.3})`;
+        g.lineWidth = 0.8;
+        g.beginPath();
+        g.moveTo(x, y);
+        g.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len);
+        g.stroke();
+        g.strokeStyle = 'rgba(60,66,70,0.25)';
+        g.beginPath();
+        g.moveTo(x + 1, y + 1);
+        g.lineTo(x + 1 + Math.cos(a) * len, y + 1 + Math.sin(a) * len);
+        g.stroke();
+      }
+    });
+    const rough = canvasTexture(N, N, (g) => {
+      g.fillStyle = 'rgb(140,140,140)';
+      g.fillRect(0, 0, N, N);
+      for (let i = 0; i < 500; i++) {
+        g.fillStyle = `rgba(${r() < 0.5 ? '200,200,200' : '90,90,90'},0.12)`;
+        g.fillRect(r() * N - 40, r() * N, N * (0.3 + r() * 0.6), 1);
+      }
+      for (const [x, y, rx, ry] of wet) {
+        g.fillStyle = 'rgba(60,60,60,0.35)';
+        g.beginPath();
+        g.ellipse(x, y, rx * 0.8, ry * 0.8, 0, 0, Math.PI * 2);
+        g.fill();
+      }
+    });
+    rough.colorSpace = THREE.NoColorSpace;
+    return new THREE.MeshStandardMaterial({ color: 0xe4e8ea, map, roughnessMap: rough, roughness: 0.9, metalness: 0.5 });
+  });
+}
+
+/** Stove pipe: dark iron near the stove, rusting up the flue, sooty at the top (uv v runs up). */
+export function stovePipeMat(): THREE.MeshStandardMaterial {
+  return once('stovePipe', () => {
+    const r = rng(515);
+    const t = canvasTexture(64, 256, (g) => {
+      const grd = g.createLinearGradient(0, 256, 0, 0);
+      grd.addColorStop(0, '#4f4a45');
+      grd.addColorStop(0.5, '#5c4b3e');
+      grd.addColorStop(0.66, '#a35f34');
+      grd.addColorStop(0.86, '#8d5430');
+      grd.addColorStop(0.95, '#3e3129');
+      grd.addColorStop(1, '#2a231e');
+      g.fillStyle = grd;
+      g.fillRect(0, 0, 64, 256);
+      for (let i = 0; i < 160; i++) {
+        g.fillStyle = r() < 0.5 ? `rgba(150,80,40,${0.1 + r() * 0.2})` : `rgba(20,16,14,${0.1 + r() * 0.15})`;
+        g.fillRect(r() * 64, r() * 256, 1 + r() * 4, 2 + r() * 14);
+      }
+    });
+    return new THREE.MeshStandardMaterial({ color: 0xffffff, map: t, roughness: 0.7, metalness: 0.2 });
+  });
+}
+
+/**
+ * Wheelhouse window: dark glass with a sky streak, glowing warm from the cabin lamp (emissive
+ * gradient, brighter low in the pane). Unique per boat: gameplay may dim or brighten it.
+ */
+export function windowGlassMat(): THREE.MeshStandardMaterial {
+  const map = canvasTexture(64, 64, (g) => {
+    g.fillStyle = '#26343a';
+    g.fillRect(0, 0, 64, 64);
+    g.fillStyle = 'rgba(200,225,235,0.22)';
+    g.beginPath();
+    g.moveTo(10, 0);
+    g.lineTo(24, 0);
+    g.lineTo(6, 64);
+    g.lineTo(-8, 64);
+    g.fill();
+    g.fillStyle = 'rgba(200,225,235,0.12)';
+    g.beginPath();
+    g.moveTo(30, 0);
+    g.lineTo(36, 0);
+    g.lineTo(18, 64);
+    g.lineTo(12, 64);
+    g.fill();
+  });
+  const em = canvasTexture(64, 64, (g) => {
+    const grd = g.createLinearGradient(0, 0, 0, 64);
+    grd.addColorStop(0, '#2e2014');
+    grd.addColorStop(0.3, '#6e4c2a');
+    grd.addColorStop(0.75, '#e8b47a');
+    grd.addColorStop(1, '#f6d2a2');
+    g.fillStyle = grd;
+    g.fillRect(0, 0, 64, 64);
+    // the lampshade glow, off to one side
+    const rg = g.createRadialGradient(40, 42, 0, 40, 42, 26);
+    rg.addColorStop(0, 'rgba(255,230,180,0.7)');
+    rg.addColorStop(1, 'rgba(255,230,180,0)');
+    g.fillStyle = rg;
+    g.fillRect(0, 0, 64, 64);
+  });
+  return new THREE.MeshStandardMaterial({ color: 0xffffff, map, roughness: 0.08, metalness: 0.3, emissive: 0xffc98e, emissiveMap: em, emissiveIntensity: 0.85 });
+}
+
+/** Yellow-and-black hazard tape (uv u along the tape, one stripe pair per 0.2 uv). */
+export function hazardMat(): THREE.MeshStandardMaterial {
+  return once('hazard', () => {
+    const t = canvasTexture(64, 32, (g) => {
+      g.fillStyle = '#f2c230';
+      g.fillRect(0, 0, 64, 32);
+      g.fillStyle = '#1e1e1e';
+      for (let x = -32; x < 96; x += 32) {
+        g.beginPath();
+        g.moveTo(x, 32);
+        g.lineTo(x + 16, 32);
+        g.lineTo(x + 32, 0);
+        g.lineTo(x + 16, 0);
+        g.fill();
+      }
+    });
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return new THREE.MeshStandardMaterial({ map: t, roughness: 0.6, metalness: 0 });
+  });
+}
+/** A flat strip of hazard tape, len × w, facing +z. */
+export function hazardStrip(len: number, w = 0.06): THREE.Mesh {
+  const g = new THREE.PlaneGeometry(len, w);
+  const uv = g.attributes.uv as THREE.BufferAttribute;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * (len / 0.12), uv.getY(i));
+  const m = new THREE.Mesh(g, hazardMat());
+  m.receiveShadow = true;
+  return m;
+}
+
+/** Rust weeping from a scupper: a soft streak fading downward (transparent decal). */
+export function rustStreakMat(): THREE.MeshStandardMaterial {
+  return once('rustStreak', () => {
+    const t = canvasTexture(32, 128, (g) => {
+      g.fillStyle = '#000';
+      g.fillRect(0, 0, 32, 128);
+      const r = rng(31);
+      for (let k = 0; k < 5; k++) {
+        const x = 8 + r() * 16,
+          w = 2 + r() * 6,
+          len = 60 + r() * 68;
+        const grd = g.createLinearGradient(0, 0, 0, len);
+        grd.addColorStop(0, 'rgba(255,255,255,0.85)');
+        grd.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = grd;
+        g.fillRect(x - w / 2, 0, w, len);
+      }
+    });
+    t.colorSpace = THREE.NoColorSpace;
+    const m = new THREE.MeshStandardMaterial({ color: 0x5c2c14, alphaMap: t, transparent: true, depthWrite: false, roughness: 0.8, metalness: 0 });
+    m.polygonOffset = true;
+    m.polygonOffsetFactor = -2;
+    m.polygonOffsetUnits = -2;
+    return m;
+  });
+}
 
 // ---------------------------------------------------------------------------------------------
 // palette atlas: small coloured plastic parts and lamps share one material each; every mesh's
@@ -857,42 +1118,90 @@ export function buntingGeo(a: THREE.Vector3, b: THREE.Vector3, count: number, si
 // ---------------------------------------------------------------------------------------------
 // clutter builders (static; local origin on the floor or at the hang point as noted)
 
-/** Tyre fender (hole facing local x) hanging from a rope `drop` metres long. Origin = hang point. */
-export function tyreFender(drop = 0.7, r = 0.3): THREE.Group {
+/**
+ * Tyre fender hanging flat against the topsides (hole facing local x, the hull normal) from a short
+ * rope `drop` metres long. Sun-faded rubber with pale sidewall rims so it never reads as a hole.
+ * Origin = hang point on the rail.
+ */
+export function tyreFender(drop = 0.35, r = 0.27, out = 0.045): THREE.Group {
   const g = new THREE.Group();
-  const t = ring(r, r * 0.38, K.rubber(), 6, 14);
+  const cy = -drop - r;
+  const t = ring(r, r * 0.38, K.tyre(), sg(6), sg(16));
   t.rotation.y = Math.PI / 2;
-  t.position.y = -drop - r;
+  t.position.set(out, cy, 0);
   g.add(t);
-  g.add(bar(0, 0, 0, 0, -drop - 0.05, 0, 0.022, K.manila()));
+  for (const s of [-1, 1]) {
+    // a raised pale ring on each sidewall (the sidewall sits at about 0.38 r off the mid-plane)
+    const rim = pal(ring(r * 0.98, r * 0.055, K.iron(), 3, sg(18)), C.tyreRim);
+    rim.rotation.y = Math.PI / 2;
+    rim.position.set(out + s * r * 0.37, cy, 0);
+    rim.castShadow = false;
+    g.add(rim);
+  }
+  // the rope: down from the rail and through the tyre
+  g.add(bar(0, 0, 0, out, cy + r * 0.62, 0, 0.02, K.manila(), 5));
+  const loop = ring(0.06, 0.018, K.manila(), 3, 8);
+  loop.position.set(out, cy + r * 0.66, 0);
+  loop.rotation.y = Math.PI / 2;
+  g.add(loop);
   return g;
 }
 
-/** Ball buoy with an eye on top, hanging `drop` metres below the origin. */
-export function hangingBuoy(drop = 0.6, r = 0.24, color: number = C.orange): THREE.Group {
-  const g = new THREE.Group();
-  const b = pal(ball(r, K.iron(), 10, 0, -drop - r, 0), color);
-  b.scale.y = 0.92;
+/** One ball buoy with its white (or orange) band and lifting eye; centre at the origin. */
+function buoyBall(r: number, color: number, g: THREE.Group, x: number, y: number, z: number, tilt = 0): void {
+  const b = pal(ball(r, K.iron(), sg(12, 6), x, y, z), color);
+  b.scale.y = 0.94;
   g.add(b);
-  const band = pal(ring(r * 0.99, 0.025, K.iron(), 4, 18), color === C.white ? C.orange : C.white);
-  band.rotation.x = Math.PI / 2;
-  band.position.y = -drop - r;
+  const band = pal(ring(r * 0.99, r * 0.11, K.iron(), sg(4), sg(18, 8)), color === C.white ? C.orange : C.white);
+  band.rotation.set(Math.PI / 2 + tilt, 0, tilt * 0.5);
+  band.position.set(x, y, z);
   g.add(band);
-  const eye = pal(ring(0.05, 0.016, K.iron(), 4, 8), color);
-  eye.position.y = -drop + 0.03;
-  g.add(eye);
-  g.add(bar(0, 0, 0, 0, -drop + 0.06, 0, 0.018, K.greenRope()));
+  if (!lowSeg) {
+    const eye = pal(ring(r * 0.2, r * 0.07, K.iron(), 3, 8), color);
+    eye.position.set(x, y + r * 0.98, z);
+    eye.rotation.z = tilt;
+    g.add(eye);
+  }
+}
+
+/** Ball buoy hanging on a short lanyard `drop` metres below the origin. */
+export function hangingBuoy(drop = 0.2, r = 0.22, color: number = C.orange): THREE.Group {
+  const g = new THREE.Group();
+  buoyBall(r, color, g, 0, -drop - r, 0);
+  g.add(bar(0, 0, 0, 0, -drop + 0.02, 0, 0.016, K.manila(), 4));
+  return g;
+}
+
+/**
+ * A tight bunch of buoys hung from one point on the rail on short lanyards, hugging the topsides
+ * (like the stern-quarter bunch in the reference). Origin = hang point; the hull face is the local
+ * yz plane through x = 0 with outboard = +x.
+ */
+export function buoyBunch(colors: number[], seed = 1): THREE.Group {
+  const g = new THREE.Group();
+  const r = rng(seed * 77 + 5);
+  const n = colors.length;
+  for (let i = 0; i < n; i++) {
+    const rad = i === 0 ? 0.23 : 0.17 + r() * 0.04;
+    const z = (i - (n - 1) / 2) * 0.36 + (r() - 0.5) * 0.05;
+    const drop = 0.06 + (i % 2) * 0.2 + r() * 0.05;
+    const x = rad - 0.035 + (i % 2) * 0.07;
+    const y = -drop - rad;
+    buoyBall(rad, colors[i], g, x, y, z, (r() - 0.5) * 0.5);
+    g.add(bar(0.04, 0, z * 0.3, x, y + rad, z, 0.014, K.manila(), 4));
+  }
+  // the lashing round the rail
+  const lash = ring(0.07, 0.022, K.manila(), 3, 8);
+  lash.position.set(0.0, 0.02, 0);
+  lash.rotation.y = Math.PI / 2;
+  g.add(lash);
   return g;
 }
 
 /** A lying ball buoy (on deck or roof). Origin on the floor. */
 export function buoyOnDeck(r = 0.24, color: number = C.orange): THREE.Group {
   const g = new THREE.Group();
-  g.add(pal(ball(r, K.iron(), 10, 0, r * 0.95, 0), color));
-  const band = pal(ring(r * 0.99, 0.025, K.iron(), 4, 18), color === C.white ? C.orange : C.white);
-  band.position.y = r * 0.95;
-  band.rotation.y = 0.4;
-  g.add(band);
+  buoyBall(r, color, g, 0, r * 0.95, 0, 0.4);
   return g;
 }
 
@@ -915,11 +1224,19 @@ export function fishCrate(color: number = C.orange, fill = false): THREE.Group {
   g.add(pal(cbox(0.16, 0.05, 0.01, m, 0.01, 0, h - 0.06, d / 2 + 0.001), dark));
   g.add(pal(cbox(0.16, 0.05, 0.01, m, 0.01, 0, h - 0.06, -d / 2 - 0.001), dark));
   if (fill) {
-    for (let i = 0; i < 4; i++) {
-      const f = pal(ball(0.06, m, 6, -0.2 + i * 0.13, h - 0.07, i % 2 ? 0.05 : -0.06), 0xa9bcc4);
-      f.scale.set(1, 0.45, 2.6);
-      f.rotation.y = 0.2 + i * 0.5;
+    // a heap of silver fish (and a red one), heads and tails catching the light
+    const fishCols = [0xc3d2d8, 0xa9bcc4, 0xd0dade, 0xe0743a, 0xb4c6cc, 0xc8d6da];
+    for (let i = 0; i < 6; i++) {
+      const fx = -0.2 + (i % 3) * 0.2 + (i > 2 ? 0.05 : 0),
+        fz = i > 2 ? 0.08 : -0.08;
+      const f = pal(ball(0.065, m, sg(8, 5), fx, h - 0.06 + (i > 2 ? 0.03 : 0), fz), fishCols[i]);
+      f.scale.set(0.9, 0.5, 2.5);
+      f.rotation.y = 1.2 + i * 0.7;
       g.add(f);
+      const tail = pal(cbox(0.012, 0.06, 0.06, m, 0), 0x8fa4ad);
+      tail.position.set(fx + Math.sin(1.2 + i * 0.7) * 0.17, h - 0.055 + (i > 2 ? 0.03 : 0), fz + Math.cos(1.2 + i * 0.7) * 0.17);
+      tail.rotation.y = 1.2 + i * 0.7;
+      g.add(tail);
     }
   }
   return g;
@@ -930,14 +1247,14 @@ export function barrel(kind: 'steel' | 'plastic' = 'steel', color: number = C.bl
   const g = new THREE.Group();
   const m = K.iron();
   if (kind === 'steel') {
-    g.add(pal(tube(0.28, 0.28, 0.86, m, 12, 0, 0.43, 0), color));
+    g.add(pal(tube(0.28, 0.28, 0.86, m, sg(14, 8), 0, 0.43, 0), color));
     for (const y of [0.29, 0.57]) {
-      const rib = pal(ring(0.285, 0.018, m, 4, 16), color);
+      const rib = pal(ring(0.285, 0.018, m, 3, sg(16, 8)), color);
       rib.rotation.x = Math.PI / 2;
       rib.position.y = y;
       g.add(rib);
     }
-    const lid = ring(0.27, 0.025, m, 4, 16);
+    const lid = ring(0.27, 0.025, m, 3, sg(16, 8));
     lid.rotation.x = Math.PI / 2;
     lid.position.y = 0.86;
     g.add(lid);
@@ -954,7 +1271,7 @@ export function ropeCoil(r = 0.36, turns = 4, color: number = C.manila, t = 0.04
   const g = new THREE.Group();
   const m = color === C.greenRope ? K.greenRope() : K.manila();
   for (let i = 0; i < turns; i++) {
-    const c = ring(r - i * t * 1.6, t, m, 4, 16);
+    const c = ring(r - i * t * 1.6, t, m, sg(4), sg(16, 8));
     c.rotation.x = Math.PI / 2;
     c.position.y = t + i * t * 1.35;
     g.add(c);
@@ -967,7 +1284,7 @@ export function hangingCoil(r = 0.22, color: number = C.manila): THREE.Group {
   const g = new THREE.Group();
   const m = color === C.greenRope ? K.greenRope() : K.manila();
   for (let i = 0; i < 4; i++) {
-    const c = ring(r + (i % 2) * 0.02, 0.03, m, 4, 14);
+    const c = ring(r + (i % 2) * 0.02, 0.03, m, sg(4), sg(14, 7));
     c.position.set(0, -r + 0.02, 0.04 + i * 0.035);
     c.rotation.z = i * 0.6;
     g.add(c);
@@ -984,10 +1301,11 @@ const netGeoCache = new Map<string, THREE.BufferGeometry>();
 /** A heap of net, w × d footprint, h tall, with cork floats. Origin on the floor. */
 export function netPile(w = 1.0, d = 0.8, h = 0.42, seed = 1): THREE.Group {
   const g = new THREE.Group();
-  const key = `${w}_${d}_${h}_${seed}`;
+  const det = lowDetail() ? 1 : 2;
+  const key = `${w}_${d}_${h}_${seed}_${det}`;
   let geo = netGeoCache.get(key);
   if (!geo) {
-    geo = new THREE.IcosahedronGeometry(1, 2);
+    geo = new THREE.IcosahedronGeometry(1, det);
     const p = geo.attributes.position as THREE.BufferAttribute;
     const r = rng(seed * 991);
     const bumps = Array.from({ length: 7 }, () => [r() * 2 - 1, r() * 0.6, r() * 2 - 1, 0.25 + r() * 0.35] as const);
@@ -1010,11 +1328,37 @@ export function netPile(w = 1.0, d = 0.8, h = 0.42, seed = 1): THREE.Group {
       rr = 0.2 + r() * 0.35;
     const x = Math.cos(a) * rr * w * 0.5,
       z = Math.sin(a) * rr * d * 0.5;
-    const f = pal(ball(0.06, K.iron(), 6, x, h * (0.45 + 0.4 * (1 - rr)), z), C.orange);
+    const f = pal(ball(0.06, K.iron(), sg(6, 4), x, h * (0.45 + 0.4 * (1 - rr)), z), C.orange);
     f.scale.set(1, 0.7, 1.4);
     f.rotation.y = a;
     g.add(f);
   }
+  return g;
+}
+
+/**
+ * A net thrown over the bulwark: a lumpy heap on the cap rail that spills down the outside of the
+ * topsides, with a few floats. Origin = the outer edge of the cap rail at its top; outboard = +x,
+ * the rail runs along z. Nothing reaches inboard of x = -0.16 (the cap's inner edge).
+ */
+export function netDrape(len = 1.2, drop = 0.75, seed = 4): THREE.Group {
+  const g = new THREE.Group();
+  // heap on the cap
+  const top = netPile(0.3, len, 0.17, seed);
+  top.position.set(-0.02, -0.01, 0);
+  g.add(top);
+  // hanging folds: upside-down heaps hugging the hull side, longest in the middle
+  const folds: [number, number, number][] = [
+    [0, len * 0.8, drop],
+    [-len * 0.28, len * 0.38, drop * 0.72],
+    [len * 0.3, len * 0.34, drop * 0.82],
+  ];
+  folds.forEach(([z, l, h], k) => {
+    const f = netPile(0.2, l, h, seed + 3 + k);
+    f.rotation.z = Math.PI;
+    f.position.set(0.09 + k * 0.015, 0.03, z);
+    g.add(f);
+  });
   return g;
 }
 
@@ -1069,15 +1413,15 @@ export function boathook(len = 1.8): THREE.Group {
 export function liferaft(): THREE.Group {
   const g = new THREE.Group();
   const m = K.iron();
-  g.add(pal(tubeX(0.26, 0.86, m, 12, 0, 0.36, 0), C.white));
+  g.add(pal(tubeX(0.26, 0.86, m, 14, 0, 0.36, 0), C.offWhite));
   for (const x of [-0.43, 0.43]) {
-    const cap = pal(ball(0.26, m, 10, x, 0.36, 0), C.white);
+    const cap = pal(ball(0.26, m, 12, x, 0.36, 0), C.offWhite);
     cap.scale.x = 0.35;
     g.add(cap);
   }
   // straps and the cradle
   for (const x of [-0.25, 0.25]) {
-    const s = ring(0.268, 0.02, K.gear(), 4, 16);
+    const s = pal(ring(0.27, 0.024, K.iron(), 3, 18), C.orange);
     s.rotation.y = Math.PI / 2;
     s.position.set(x, 0.36, 0);
     g.add(s);
@@ -1090,15 +1434,33 @@ export function liferaft(): THREE.Group {
   return g;
 }
 
-/** Radar dome on a short pedestal. Origin on the mounting surface. */
+/**
+ * Radome: a short off-white drum with a domed top and a dark seam, on a steel bracket with a
+ * cable gland. Origin on the mounting surface.
+ */
 export function radarDome(): THREE.Group {
   const g = new THREE.Group();
   const m = K.iron();
-  g.add(tube(0.06, 0.08, 0.22, m, 8, 0, 0.11, 0));
-  g.add(pal(tube(0.3, 0.3, 0.16, m, 16, 0, 0.3, 0), C.white));
-  const top = pal(ball(0.3, m, 16, 0, 0.38, 0), C.white);
-  top.scale.y = 0.35;
-  g.add(top);
+  // bracket: base plate, two gussets and a short post
+  g.add(cbox(0.42, 0.03, 0.42, m, 0.01, 0, 0.015, 0));
+  g.add(tube(0.07, 0.08, 0.2, K.steel(), 10, 0, 0.12, 0));
+  for (const s of [-1, 1]) g.add(cbox(0.02, 0.14, 0.24, K.steel(), 0.005, s * 0.06, 0.09, 0));
+  g.add(cbox(0.5, 0.03, 0.5, K.steel(), 0.01, 0, 0.23, 0));
+  // drum + dome
+  g.add(pal(tube(0.32, 0.31, 0.16, m, sg(20, 12), 0, 0.33, 0), C.offWhite));
+  const seam = pal(ring(0.322, 0.012, m, 3, sg(24, 12)), 0x6b6f72);
+  seam.rotation.x = Math.PI / 2;
+  seam.position.y = 0.41;
+  g.add(seam);
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(0.32, sg(20, 12), sg(6, 4), 0, Math.PI * 2, 0, Math.PI / 2), m);
+  dome.scale.y = 0.55;
+  dome.position.y = 0.41;
+  dome.castShadow = true;
+  dome.receiveShadow = true;
+  g.add(pal(dome, C.offWhite));
+  // cable gland
+  const cab = bar(0.05, 0.05, 0.08, 0.2, 0.0, 0.2, 0.018, m, 5);
+  g.add(cab);
   return g;
 }
 
@@ -1106,9 +1468,40 @@ export function radarDome(): THREE.Group {
 export function radarScanner(len = 1.2): THREE.Group {
   const g = new THREE.Group();
   const m = K.iron();
-  g.add(pal(cbox(0.22, 0.18, 0.26, m, 0.04, 0, 0.09, 0), C.white));
-  g.add(pal(cbox(len, 0.1, 0.12, m, 0.04, 0, 0.26, 0), C.white));
-  g.add(pal(cbox(len - 0.1, 0.02, 0.124, m, 0.005, 0, 0.26, 0), 0x2a2f33));
+  g.add(pal(cbox(0.22, 0.18, 0.26, m, 0.04, 0, 0.09, 0), C.offWhite));
+  g.add(pal(cbox(len, 0.1, 0.12, m, 0.04, 0, 0.26, 0), C.offWhite));
+  g.add(pal(cbox(len - 0.1, 0.02, 0.124, m, 0.005, 0, 0.26, 0), 0x3a3f43));
+  return g;
+}
+
+/**
+ * Navigation sidelight: a little dark lamp box with a cap, a black screen on its inboard side and
+ * a coloured lens on the outboard face only (+x). Origin at the base.
+ */
+export function sidelight(color: number): THREE.Group {
+  const g = new THREE.Group();
+  const m = K.iron();
+  g.add(cbox(0.12, 0.14, 0.14, K.cream(), 0.025, 0, 0.07, 0));
+  g.add(cbox(0.16, 0.025, 0.18, K.cream(), 0.01, 0.01, 0.152, 0));
+  g.add(pal(cbox(0.02, 0.18, 0.26, m, 0.006, -0.072, 0.085, 0.02), 0x26292c));
+  g.add(pal(cbox(0.025, 0.1, 0.11, m, 0.008, 0.062, 0.075, 0), color, 'soft'));
+  return g;
+}
+
+/**
+ * Deck floodlight: dark housing with a short visor, warm lens (not pure white) facing local -z.
+ * Origin at the bracket.
+ */
+export function floodlight(): THREE.Group {
+  const g = new THREE.Group();
+  const m = K.iron();
+  g.add(cbox(0.24, 0.18, 0.14, m, 0.035, 0, 0, 0));
+  g.add(cbox(0.16, 0.12, 0.06, m, 0.02, 0, 0, 0.08));
+  const visor = cbox(0.27, 0.02, 0.1, m, 0.006, 0, 0.1, -0.1);
+  visor.rotation.x = -0.25;
+  g.add(visor);
+  for (const s of [-1, 1]) g.add(cbox(0.015, 0.16, 0.08, m, 0.004, s * 0.128, 0.02, -0.08));
+  g.add(pal(cbox(0.19, 0.13, 0.015, m, 0.008, 0, -0.005, -0.072), 0xffc884, 'soft'));
   return g;
 }
 
@@ -1119,7 +1512,7 @@ export function searchlight(): THREE.Group {
   g.add(tube(0.05, 0.07, 0.12, m, 8, 0, 0.06, 0));
   g.add(cbox(0.3, 0.04, 0.06, m, 0.01, 0, 0.14, 0));
   g.add(tubeZ(0.11, 0.26, K.steel(), 12, 0, 0.26, 0));
-  const lens = pal(ball(0.1, m, 10, 0, 0.26, 0.13), 0xfff1c8, true);
+  const lens = pal(ball(0.1, m, 10, 0, 0.26, 0.13), 0xffd59a, 'soft');
   lens.scale.z = 0.3;
   g.add(lens);
   return g;

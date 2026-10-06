@@ -11,7 +11,11 @@
  * merged separately and handed to the game through `cutaway` / `cutawayMats`.
  *
  * Decor has no colliders, so it only sits where nothing walks or slides: outside the bulwarks,
- * on the wheelhouse roof and walls, the foredeck corners and behind the pot stack at the stern.
+ * on the wheelhouse roof and walls, tucked into the bow and behind the pot stack at the stern.
+ *
+ * On the Low tier (phones) round clutter uses half the segments, the inner-bulwark stanchions are
+ * flat painted strips, and the bunting and whip antennas are skipped (none of it shows from the
+ * overhead camera).
  */
 import * as THREE from 'three';
 import { config } from '../config';
@@ -36,13 +40,14 @@ import {
   letterPlane,
   LETTERS,
   tyreFender,
-  hangingBuoy,
+  buoyBunch,
   buoyOnDeck,
   fishCrate,
   barrel,
   ropeCoil,
   hangingCoil,
   netPile,
+  netDrape,
   cleat,
   bitts,
   extinguisher,
@@ -50,6 +55,8 @@ import {
   liferaft,
   radarDome,
   radarScanner,
+  sidelight,
+  floodlight,
   searchlight,
   horn,
   anchor,
@@ -62,6 +69,13 @@ import {
   gull,
   aoBlob,
   aoEdge,
+  isLowTier,
+  setLowDetail,
+  tableSteelMat,
+  stovePipeMat,
+  windowGlassMat,
+  hazardStrip,
+  rustStreakMat,
 } from './props';
 
 export interface BoatArt {
@@ -128,8 +142,8 @@ function hullStations(n: number): number[] {
 }
 
 /** The hull shell: uv u = metres along the boat, v = metres of girth below the gunwale. */
-function hullGeometry(): THREE.BufferGeometry {
-  const zs = hullStations(44);
+function hullGeometry(stations = 44): THREE.BufferGeometry {
+  const zs = hullStations(stations);
   const pos: number[] = [];
   const uv: number[] = [];
   const idx: number[] = [];
@@ -234,9 +248,9 @@ function hullLoop(off: number, y: (z: number) => number, n = 40, sternInset = 0)
 }
 
 /** A vertical strip along one side at x = side·(hw − inset), from the deck to the rail top. */
-function bulwarkInnerGeometry(side: 1 | -1): THREE.BufferGeometry {
+function bulwarkInnerGeometry(side: 1 | -1, stations = 44): THREE.BufferGeometry {
   const inset = BULWARK_T;
-  const zs = hullStations(44).filter((z) => hullHalfWidth(z) - inset > 0.02);
+  const zs = hullStations(stations).filter((z) => hullHalfWidth(z) - inset > 0.02);
   zs[0] = STERN_Z + inset;
   const pos: number[] = [];
   const idx: number[] = [];
@@ -274,6 +288,16 @@ function sideYaw(side: 1 | -1, z: number): number {
 // ---------------------------------------------------------------------------------------------
 
 export function makeBoat(): BoatArt {
+  const low = isLowTier();
+  setLowDetail(low);
+  try {
+    return buildBoat(low);
+  } finally {
+    setLowDetail(false);
+  }
+}
+
+function buildBoat(low: boolean): BoatArt {
   const root = new THREE.Group();
   root.name = 'Puffin';
 
@@ -283,7 +307,7 @@ export function makeBoat(): BoatArt {
     deck: K.deck(),
     varnish: K.varnish(),
     darkWood: K.darkWood(),
-    wall: brightCopy(wood(0xffffff, { plankWidth: 0.16, along: 'x', weathered: false, rough: 0.6 }), 1.32, 1.27, 1.16),
+    wall: brightCopy(wood(0xffffff, { plankWidth: 0.16, along: 'x', weathered: false, rough: 0.6 }), 1.36, 1.25, 1.03),
     roof: wood(C.roofWood, { plankWidth: 0.14, along: 'z', weathered: true }),
     gear: K.gear(),
     machine: K.machine(),
@@ -294,18 +318,22 @@ export function makeBoat(): BoatArt {
     brass: K.brass(),
     manila: K.manila(),
     rubber: K.rubber(),
+    rigging: K.rigging(),
+    navy: K.navy(),
+    galv: K.galv(),
   };
 
   // =============================================================================================
   // HULL
-  root.add(meshOf(hullGeometry(), M.hull));
+  const stations = low ? 30 : 44;
+  root.add(meshOf(hullGeometry(stations), M.hull));
   root.add(meshOf(transomGeometry(), M.hull));
   // varnished cap rail on the bulwark (wraps around the stern)
-  const capPath = hullLoop(-BULWARK_T / 2, (z) => railHeight(z) + 0.045, 46, 0.075);
-  root.add(meshOf(sweep(capPath, rectProfile(0.27, 0.09, 0.03, -0.015), true), M.varnish));
+  const capPath = hullLoop(-BULWARK_T / 2, (z) => railHeight(z) + 0.045, low ? 32 : 46, 0.075);
+  root.add(meshOf(sweep(capPath, rectProfile(0.235, 0.09, 0.03, -0.0325), true), M.varnish));
   // rub rail (wale) along the sheer at deck level
   const rubY = (z: number) => -0.04 + 0.33 * smoothstep(z, 3, BOW_Z);
-  root.add(meshOf(sweep(hullLoop(0.0, rubY, 46, 0), rectProfile(0.13, 0.17, 0.055, -0.055), true), M.darkWood));
+  root.add(meshOf(sweep(hullLoop(0.0, rubY, low ? 32 : 46, 0), rectProfile(0.13, 0.17, 0.055, -0.055), true), M.darkWood));
   // stem band at the bow
   const stemTop = railHeight(BOW_Z - 0.05) + 0.08;
   {
@@ -336,15 +364,29 @@ export function makeBoat(): BoatArt {
       root.add(r);
     }
   }
-  // scuppers: dark slots above the rub rail
-  for (const side of [1, -1]) {
-    for (let z = -8; z < 3; z += 2.2) {
-      const s = cbox(0.05, 0.1, 0.42, M.iron, 0, side * (hullHalfWidth(z) + 0.004), 0.15, z);
-      s.castShadow = false;
-      root.add(s);
-      const si = cbox(0.03, 0.1, 0.42, M.iron, 0, side * (hullHalfWidth(z) - BULWARK_T - 0.004), 0.06, z);
-      si.castShadow = false;
-      root.add(si);
+  // scuppers: small dark slots above the rub rail, each weeping a rust streak down the topsides
+  {
+    const rust = rustStreakMat();
+    for (const side of [1, -1] as const) {
+      for (let z = -8; z < 3; z += 2.2) {
+        const hw = hullHalfWidth(z);
+        const s = cbox(0.04, 0.07, 0.24, M.iron, 0, side * (hw + 0.004), 0.14, z);
+        s.castShadow = false;
+        root.add(s);
+        const si = cbox(0.03, 0.07, 0.24, M.iron, 0, side * (hw - BULWARK_T - 0.004), 0.055, z);
+        si.castShadow = false;
+        root.add(si);
+        for (const [y0, y1, w] of [
+          [0.11, 0.05, 0.12],
+          [-0.13, -0.78, 0.16],
+        ]) {
+          const st = new THREE.Mesh(new THREE.PlaneGeometry(w, y0 - y1), rust);
+          st.position.set(side * (hw + 0.012), (y0 + y1) / 2, z);
+          st.rotation.y = sideYaw(side, z);
+          st.renderOrder = 1;
+          root.add(st);
+        }
+      }
     }
   }
 
@@ -353,20 +395,28 @@ export function makeBoat(): BoatArt {
   const deck = meshOf(deckGeometry(), M.deck, false, true);
   deck.position.y = 0.001;
   root.add(deck);
-  root.add(meshOf(bulwarkInnerGeometry(1), M.deck, false, true));
-  root.add(meshOf(bulwarkInnerGeometry(-1), M.deck, false, true));
+  root.add(meshOf(bulwarkInnerGeometry(1, stations), M.deck, false, true));
+  root.add(meshOf(bulwarkInnerGeometry(-1, stations), M.deck, false, true));
   const sternHw = hullHalfWidth(STERN_Z + BULWARK_T);
   root.add(cbox(2 * (sternHw - BULWARK_T) + 0.04, 1.0, 0.05, M.deck, 0.01, 0, 0.5, STERN_Z + BULWARK_T - 0.02));
-  // stanchions (frames) on the inner bulwark
+  // stanchions (frames) on the inner bulwark; on Low they are flat painted strips
   for (const side of [1, -1] as const) {
     for (let z = -8.7; z < 9.6; z += 1.3) {
       const hw = hullHalfWidth(z);
       if (hw < 1.0) continue;
       const h = railHeight(z);
-      const s = cbox(0.09, h, 0.1, M.varnish, 0.025, side * (hw - BULWARK_T - 0.04), h / 2, z);
-      s.rotation.y = sideYaw(side, z);
-      s.castShadow = false;
-      root.add(s);
+      if (low) {
+        const s = new THREE.Mesh(new THREE.PlaneGeometry(0.1, h), M.varnish);
+        s.position.set(side * (hw - BULWARK_T - 0.006), h / 2, z);
+        s.rotation.y = sideYaw(side, z) + Math.PI;
+        s.receiveShadow = true;
+        root.add(s);
+      } else {
+        const s = cbox(0.07, h, 0.1, M.varnish, 0.022, side * (hw - BULWARK_T - 0.032), h / 2, z);
+        s.rotation.y = sideYaw(side, z);
+        s.castShadow = false;
+        root.add(s);
+      }
     }
   }
   // cleats on the cap rail
@@ -395,7 +445,7 @@ export function makeBoat(): BoatArt {
   const trimMat = fadeCopy(M.varnish);
   const fasciaMat = fadeCopy(paint(C.fascia, { rough: 0.55 }));
   const cutawayMats: THREE.MeshStandardMaterial[] = [upperMat, roofMat, trimMat, fasciaMat];
-  const windowMat = new THREE.MeshStandardMaterial({ color: 0x8fb2bc, roughness: 0.1, metalness: 0.25, emissive: 0xffb25e, emissiveIntensity: 0.85 });
+  const windowMat = windowGlassMat();
   const lowerH = 1.05;
   const W = H.x1 - H.x0;
   const D = H.z1 - H.z0;
@@ -481,15 +531,16 @@ export function makeBoat(): BoatArt {
       pane.castShadow = false;
       upper.add(pane);
     }
-    // frame (outside), sill and a centre mullion
+    // a deep frame (so the glass sits recessed), a drip head, a sill and a recessed mullion
     const f = new THREE.Group();
-    f.position.set(x, y, z).addScaledVector(n, t / 2 + 0.02);
+    f.position.set(x, y, z).addScaledVector(n, t / 2 + 0.04);
     f.rotation.y = ry;
-    f.add(cbox(w + 0.14, 0.07, 0.05, trimMat, 0.02, 0, h / 2 + 0.035, 0));
-    f.add(cbox(w + 0.2, 0.07, 0.1, trimMat, 0.025, 0, -h / 2 - 0.035, 0.02));
-    f.add(cbox(0.07, h, 0.05, trimMat, 0.02, w / 2 + 0.035, 0, 0));
-    f.add(cbox(0.07, h, 0.05, trimMat, 0.02, -w / 2 - 0.035, 0, 0));
-    if (w > 0.7) f.add(cbox(0.04, h, 0.03, trimMat, 0.01, 0, 0, 0));
+    f.add(cbox(w + 0.16, 0.08, 0.09, trimMat, 0.025, 0, h / 2 + 0.04, 0));
+    f.add(cbox(w + 0.24, 0.035, 0.12, trimMat, 0.012, 0, h / 2 + 0.095, 0.01));
+    f.add(cbox(w + 0.22, 0.07, 0.13, trimMat, 0.025, 0, -h / 2 - 0.035, 0.02));
+    f.add(cbox(0.08, h, 0.09, trimMat, 0.025, w / 2 + 0.04, 0, 0));
+    f.add(cbox(0.08, h, 0.09, trimMat, 0.025, -w / 2 - 0.04, 0, 0));
+    if (w > 0.7) f.add(cbox(0.035, h, 0.035, trimMat, 0.01, 0, 0, -0.03));
     upper.add(f);
   };
   for (const x of [-1.15, 0, 1.15]) addWin(x, 1.66, H.z1 - t / 2, 0, 0.92, 0.6);
@@ -565,7 +616,7 @@ export function makeBoat(): BoatArt {
     g.add(bar(-rx, ry, rz1, rx, ry, rz1, 0.026, M.steel, 6));
     // life-raft canister (aft, starboard)
     const lr = liferaft();
-    lr.position.set(-1.05, roofTop, 3.75);
+    lr.position.set(-1.0, roofTop, 4.55);
     g.add(lr);
     // radar dome, searchlight, horn up front
     const rd = radarDome();
@@ -577,21 +628,28 @@ export function makeBoat(): BoatArt {
     const hn = horn();
     hn.position.set(0.45, roofTop, 7.62);
     g.add(hn);
-    // whip antennas at the front corners
-    for (const s of [-1, 1]) {
-      g.add(tube(0.035, 0.045, 0.12, M.iron, 6, s * 1.95, roofTop + 0.06, 7.75));
-      g.add(pal(tube(0.012, 0.018, 1.6, M.iron, 5, s * 1.95, roofTop + 0.9, 7.75), C.white));
-    }
-    // fish crates, buoys, rope and a net bundle
+    // whip antennas at the front corners (skipped on Low)
+    if (!low)
+      for (const s of [-1, 1]) {
+        g.add(tube(0.035, 0.045, 0.12, M.iron, 6, s * 1.95, roofTop + 0.06, 7.75));
+        g.add(pal(tube(0.012, 0.018, 1.6, M.iron, 5, s * 1.95, roofTop + 0.9, 7.75), C.offWhite));
+      }
+    // orange fish crates stacked on the aft starboard corner (full of fish, readable from the
+    // overhead camera), a teal one up front, buoys, rope and a net bundle
     const c1 = fishCrate(C.orange);
-    c1.position.set(1.3, roofTop, 6.85);
+    c1.position.set(-1.6, roofTop, 3.5);
+    c1.rotation.y = 0.04;
     g.add(c1);
     const c2 = fishCrate(C.orange, true);
-    c2.position.set(1.3, roofTop + 0.29, 6.85);
-    c2.rotation.y = 0.06;
+    c2.position.set(-1.58, roofTop + 0.29, 3.53);
+    c2.rotation.y = -0.12;
     g.add(c2);
+    const c2b = fishCrate(C.orange, true);
+    c2b.rotation.y = Math.PI / 2 + 0.06;
+    c2b.position.set(-0.92, roofTop, 3.47);
+    g.add(c2b);
     const c3 = fishCrate(0x2f8f9a);
-    c3.position.set(1.32, roofTop, 6.25);
+    c3.position.set(1.32, roofTop, 6.85);
     c3.rotation.y = -0.1;
     g.add(c3);
     const b1 = buoyOnDeck(0.24);
@@ -629,8 +687,12 @@ export function makeBoat(): BoatArt {
     // spreader with sidelights (red to port, green to starboard)
     const spY = 5.55;
     root.add(cbox(1.5, 0.07, 0.1, M.cream, 0.02, mastBase.x, spY, mastBase.z));
-    root.add(pal(cbox(0.1, 0.12, 0.1, M.iron, 0.02, mastBase.x + 0.75, spY + 0.09, mastBase.z), 0xff2a14, 'soft'));
-    root.add(pal(cbox(0.1, 0.12, 0.1, M.iron, 0.02, mastBase.x - 0.75, spY + 0.09, mastBase.z), 0x18ff58, 'soft'));
+    for (const s of [1, -1]) {
+      const sl = sidelight(s > 0 ? 0xff3a1e : 0x2cff6a);
+      sl.position.set(mastBase.x + s * 0.68, spY + 0.035, mastBase.z);
+      sl.rotation.y = s > 0 ? 0 : Math.PI;
+      root.add(sl);
+    }
     // radar scanner on a platform on the forward face
     root.add(cbox(0.5, 0.04, 0.46, M.iron, 0.01, mastBase.x, 4.98, mastBase.z + 0.3));
     root.add(bar(mastBase.x, 4.7, mastBase.z + 0.08, mastBase.x, 4.96, mastBase.z + 0.45, 0.02, M.iron, 5));
@@ -639,40 +701,41 @@ export function makeBoat(): BoatArt {
     sc.rotation.y = 0.35;
     root.add(sc);
     // floodlights aimed aft over the working deck
+    root.add(cbox(0.56, 0.05, 0.06, M.iron, 0.015, mastBase.x, 4.66, mastBase.z - 0.1));
     for (const s of [-1, 1]) {
-      const fl = new THREE.Group();
-      fl.add(cbox(0.2, 0.15, 0.12, M.iron, 0.03, 0, 0, 0));
-      fl.add(pal(cbox(0.16, 0.11, 0.02, M.iron, 0.005, 0, 0, -0.065), 0xffe2a8, true));
-      fl.position.set(mastBase.x + s * 0.17, 4.55, mastBase.z - 0.14);
-      fl.rotation.x = 0.45;
+      const fl = floodlight();
+      fl.position.set(mastBase.x + s * 0.2, 4.55, mastBase.z - 0.17);
+      fl.rotation.set(-0.42, s * 0.12, 0);
       root.add(fl);
     }
     // masthead: white light, VHF whip, little weather vane
     root.add(tube(0.07, 0.07, 0.1, M.iron, 8, mastBase.x, mastTop + 0.03, mastBase.z));
-    root.add(pal(tube(0.055, 0.055, 0.12, M.iron, 8, mastBase.x, mastTop + 0.14, mastBase.z), 0xfff4d6, true));
+    root.add(pal(tube(0.055, 0.055, 0.12, M.iron, 8, mastBase.x, mastTop + 0.14, mastBase.z), 0xffe9c4, 'soft'));
     root.add(tube(0.075, 0.075, 0.03, M.iron, 8, mastBase.x, mastTop + 0.215, mastBase.z));
-    root.add(pal(tube(0.008, 0.014, 1.1, M.iron, 5, mastBase.x + 0.08, mastTop + 0.6, mastBase.z), C.white));
+    if (!low) root.add(pal(tube(0.008, 0.014, 1.1, M.iron, 5, mastBase.x + 0.08, mastTop + 0.6, mastBase.z), C.offWhite));
     // the harbour flag off the starboard spreader
     const flag = new THREE.Mesh(flagGeo(0.55, 0.36, 2, 0.07), flagMat());
     flag.position.set(mastBase.x - 0.72, spY - 0.22, mastBase.z);
     flag.rotation.y = Math.PI / 2 + 0.25; // streams aft
     flag.castShadow = true;
     root.add(flag);
-    root.add(bar(mastBase.x - 0.72, spY, mastBase.z, mastBase.x - 0.72, spY - 0.42, mastBase.z, 0.006, M.iron, 4));
+    root.add(bar(mastBase.x - 0.72, spY, mastBase.z, mastBase.x - 0.72, spY - 0.42, mastBase.z, 0.005, M.rigging, 4));
     // forestay to the stem head (with signal-flag bunting) and a backstay to the stern staff
     const stayTop = new THREE.Vector3(mastBase.x, mastTop - 0.1, mastBase.z);
     const stem = new THREE.Vector3(0, stemTop, BOW_Z - 0.02);
-    root.add(line3(stayTop, stem, 0.012, M.iron));
-    for (const sx of [-0.73, 0.73]) root.add(line3(new THREE.Vector3(mastBase.x, mastTop - 0.15, mastBase.z), new THREE.Vector3(mastBase.x + sx, spY + 0.03, mastBase.z), 0.009, M.iron, 4));
-    const bunt = new THREE.Mesh(buntingGeo(stayTop.clone().lerp(stem, 0.04), stem.clone().lerp(stayTop, 0.05), 14, 0.2), buntingMat());
-    bunt.castShadow = false;
-    root.add(bunt);
+    root.add(line3(stayTop, stem, 0.007, M.rigging, 4));
+    for (const sx of [-0.6, 0.6]) root.add(line3(new THREE.Vector3(mastBase.x, mastTop - 0.15, mastBase.z), new THREE.Vector3(mastBase.x + sx, spY + 0.03, mastBase.z), 0.006, M.rigging, 4));
+    if (!low) {
+      const bunt = new THREE.Mesh(buntingGeo(stayTop.clone().lerp(stem, 0.04), stem.clone().lerp(stayTop, 0.05), 14, 0.2), buntingMat());
+      bunt.castShadow = false;
+      root.add(bunt);
+    }
   }
   // stern flagstaff with the stern light and the ensign
   {
     root.add(tube(0.03, 0.04, 1.9, M.varnish, 6, 0, 1.09 + 0.95, STERN_Z + 0.08));
     root.add(ball(0.05, M.brass, 8, 0, 3.0, STERN_Z + 0.08));
-    root.add(pal(tube(0.05, 0.05, 0.1, M.iron, 8, 0, 1.25, STERN_Z + 0.08), 0xfff4d6, true));
+    root.add(pal(tube(0.05, 0.05, 0.1, M.iron, 8, 0, 1.25, STERN_Z + 0.08), 0xffe9c4, 'soft'));
     root.add(tube(0.065, 0.065, 0.03, M.iron, 8, 0, 1.315, STERN_Z + 0.08));
     const ens = new THREE.Mesh(flagGeo(0.7, 0.46, 2, 0.08), flagMat());
     ens.position.set(0, 2.72, STERN_Z + 0.08);
@@ -720,8 +783,24 @@ export function makeBoat(): BoatArt {
     root.add(pal(cbox(0.34, 0.2, 0.02, M.iron, 0.01, sx, 0.4, sz - st.half.z + 0.01), 0xff6a1a, 'soft'));
     root.add(cbox(0.42, 0.28, 0.03, M.brass, 0.01, sx, 0.4, sz - st.half.z + 0.025));
     root.add(bar(sx - st.half.x, top + 0.07, sz - st.half.z, sx + st.half.x, top + 0.07, sz - st.half.z, 0.012, M.brass, 5));
-    root.add(tube(0.075, 0.075, 2.3, M.iron, 10, sx + 0.12, top + 1.15, sz + 0.08));
-    root.add(tube(0.13, 0.1, 0.12, M.iron, 10, sx + 0.12, top + 2.35, sz + 0.08));
+    {
+      // flue: dark iron rusting toward the roof and sooty at the top, a brass collar where it
+      // passes the roof (fades with it) and a cream rain cap on three legs
+      const px = sx + 0.12,
+        pz = sz + 0.08,
+        pTop = roofTop + 0.75;
+      root.add(tube(0.075, 0.075, pTop - top, stovePipeMat(), 12, px, (top + pTop) / 2, pz));
+      root.add(tube(0.09, 0.09, 0.05, M.brass, 12, px, top + 0.04, pz));
+      upper.add(tube(0.15, 0.17, 0.06, M.brass, 12, px, roofTop + 0.03, pz));
+      upper.add(tube(0.09, 0.09, 0.04, M.brass, 12, px, roofTop + 0.08, pz));
+      upper.add(tube(0.085, 0.085, 0.035, M.iron, 12, px, pTop - 0.02, pz));
+      for (let k = 0; k < 3; k++) {
+        const a = (k * Math.PI * 2) / 3;
+        upper.add(bar(px + Math.cos(a) * 0.07, pTop - 0.02, pz + Math.sin(a) * 0.07, px + Math.cos(a) * 0.1, pTop + 0.1, pz + Math.sin(a) * 0.1, 0.01, M.iron, 4));
+      }
+      upper.add(tube(0.02, 0.19, 0.11, M.cream, 14, px, pTop + 0.15, pz));
+      upper.add(tube(0.19, 0.19, 0.02, M.cream, 14, px, pTop + 0.09, pz));
+    }
     const kettle = new THREE.Group();
     kettle.add(pal(tube(0.11, 0.14, 0.18, M.iron, 12, 0, 0.09, 0), 0x3f8c8f));
     const kh = ring(0.08, 0.012, M.iron, 4, 10, Math.PI);
@@ -909,7 +988,7 @@ export function makeBoat(): BoatArt {
   }
 
   // =============================================================================================
-  // LAUNCH CRADLE (tilts about its outboard / inboard edge) on a teal stand
+  // LAUNCH CRADLE (tilts about its outboard / inboard edge) on a navy stand with teal legs
   const cradle = new THREE.Group();
   cradle.name = 'dyn:cradle';
   const c = L.cradle;
@@ -924,20 +1003,36 @@ export function makeBoat(): BoatArt {
       cradle.add(tubeZ(0.052, hz * 2 - 0.28, M.steel, 10, i * 0.38, 0.005, 0));
       for (const s of [-1, 1]) cradle.add(tubeZ(0.058, 0.04, M.gear, 10, i * 0.38, 0.005, s * (hz - 0.16)));
     }
-    // outboard stop: a padded orange bumper
+    // galvanised drip tray under the rollers (grey shows between them, not the stand)
+    cradle.add(cbox(hx * 2 - 0.16, 0.025, hz * 2 - 0.26, M.galv, 0.008, 0, -0.07, 0));
+    for (const s of [-1, 1]) cradle.add(cbox(hx * 2 - 0.16, 0.05, 0.025, M.galv, 0.008, 0, -0.055, s * (hz - 0.14)));
+    // outboard stop: a padded orange bumper with hazard tape along its top and face
     cradle.add(cbox(0.12, 0.26, hz * 2, M.gear, 0.045, -hx - 0.02, 0.1, 0));
+    const tapeTop = hazardStrip(hz * 2 - 0.12, 0.085);
+    tapeTop.rotation.set(-Math.PI / 2, 0, Math.PI / 2);
+    tapeTop.position.set(-hx - 0.02, 0.2305, 0);
+    cradle.add(tapeTop);
+    const tapeFace = hazardStrip(hz * 2 - 0.12, 0.1);
+    tapeFace.rotation.y = -Math.PI / 2;
+    tapeFace.position.set(-hx - 0.0805, 0.12, 0);
+    cradle.add(tapeFace);
     // hinge knuckles under both long edges
     for (const s of [-1, 1]) for (const z of [-0.6, 0.6]) cradle.add(tubeZ(0.05, 0.18, M.iron, 8, s * (hx - 0.03), -0.08, z));
     // stand (static): corner posts, top frame, a darker solid core, a ram
     const cx = c.center.x,
       cz = c.center.z;
     const topY = c.center.y - 0.1;
-    root.add(cbox(1.66, topY - 0.1, 1.66, M.machine, 0.05, cx, (topY - 0.1) / 2 + 0.02, cz));
+    root.add(cbox(1.66, topY - 0.1, 1.66, M.navy, 0.05, cx, (topY - 0.1) / 2 + 0.02, cz));
     for (const dx of [-1, 1])
-      for (const dz of [-1, 1]) root.add(cbox(0.14, topY, 0.14, M.machine, 0.035, cx + dx * 0.86, topY / 2, cz + dz * 0.86));
-    for (const dz of [-1, 1]) root.add(cbox(1.86, 0.12, 0.12, M.machine, 0.035, cx, topY - 0.02, cz + dz * 0.86));
-    for (const dx of [-1, 1]) root.add(cbox(0.12, 0.12, 1.86, M.machine, 0.035, cx + dx * 0.86, topY - 0.02, cz));
+      for (const dz of [-1, 1]) root.add(cbox(0.15, topY, 0.15, M.machine, 0.04, cx + dx * 0.86, topY / 2, cz + dz * 0.86));
+    for (const dz of [-1, 1]) root.add(cbox(1.86, 0.12, 0.12, M.navy, 0.035, cx, topY - 0.02, cz + dz * 0.86));
+    for (const dx of [-1, 1]) root.add(cbox(0.12, 0.12, 1.86, M.navy, 0.035, cx + dx * 0.86, topY - 0.02, cz));
     for (const dz of [-1, 1]) root.add(bar(cx - 0.8, 0.12, cz + dz * 0.86, cx + 0.8, topY - 0.1, cz + dz * 0.86, 0.035, M.machine, 6));
+    // hazard tape down the outboard face of the stand
+    const tapeStand = hazardStrip(1.6, 0.09);
+    tapeStand.rotation.y = -Math.PI / 2;
+    tapeStand.position.set(cx - 0.835, topY - 0.02, cz);
+    root.add(tapeStand);
     root.add(cbox(1.9, 0.05, 1.9, M.iron, 0.015, cx, 0.025, cz));
     // hinge blocks along both top edges (the cradle pivots on either)
     for (const s of [-1, 1]) for (const z of [-0.6, 0.6]) root.add(cbox(0.14, 0.12, 0.26, M.iron, 0.03, cx + s * (c.half.x - 0.03), topY + 0.05, cz + z));
@@ -982,7 +1077,8 @@ export function makeBoat(): BoatArt {
   root.add(spiritGroup);
 
   // =============================================================================================
-  // SORTING TABLE: galvanised top with varnished lips on a planked cabinet (solid, like its collider)
+  // SORTING TABLE: brushed steel top with varnished lips (matching the lip colliders), a rounded
+  // varnished nosing along the open edge and a drain, on a planked cabinet (solid, like its collider)
   {
     const tb = L.table;
     const tx = tb.center.x,
@@ -992,10 +1088,19 @@ export function makeBoat(): BoatArt {
     root.add(cbox(w - 0.08, 0.8, d - 0.08, M.darkWood, 0.04, tx, 0.42, tz));
     root.add(cbox(w - 0.04, 0.06, d - 0.04, M.iron, 0.02, tx, 0.03, tz));
     for (const dx of [-1, 1]) for (const dz of [-1, 1]) root.add(cbox(0.1, 0.84, 0.1, M.steel, 0.025, tx + dx * (w / 2 - 0.05), 0.42, tz + dz * (d / 2 - 0.05)));
-    root.add(cbox(w, 0.06, d, M.steel, 0.02, tx, 0.875, tz));
-    root.add(cbox(0.07, 0.13, d, M.varnish, 0.025, tx + w / 2, 0.955, tz));
-    root.add(cbox(w, 0.13, 0.07, M.varnish, 0.025, tx, 0.955, tz - d / 2));
-    root.add(cbox(w, 0.13, 0.07, M.varnish, 0.025, tx, 0.955, tz + d / 2));
+    root.add(cbox(w - 0.02, 0.05, d - 0.02, tableSteelMat(), 0.018, tx, 0.875, tz));
+    root.add(cbox(w + 0.02, 0.03, d + 0.02, M.steel, 0.01, tx, 0.84, tz));
+    root.add(cbox(0.07, 0.13, d, M.varnish, 0.03, tx + w / 2, 0.955, tz));
+    root.add(cbox(w, 0.13, 0.07, M.varnish, 0.03, tx, 0.955, tz - d / 2));
+    root.add(cbox(w, 0.13, 0.07, M.varnish, 0.03, tx, 0.955, tz + d / 2));
+    // brass caps where the lips meet
+    for (const dz of [-1, 1]) root.add(cbox(0.09, 0.03, 0.09, M.brass, 0.012, tx + w / 2, 1.025, tz + dz * (d / 2)));
+    // the open (starboard) edge: a rounded varnished nosing, flush with the steel
+    root.add(tubeZ(0.032, d - 0.06, M.varnish, 10, tx - w / 2 + 0.01, 0.876, tz));
+    // drain slot near the open edge, and its spout under the nosing
+    root.add(cbox(0.05, 0.008, 0.26, M.iron, 0.003, tx - w / 2 + 0.11, 0.901, tz + d / 2 - 0.32));
+    root.add(cbox(0.07, 0.004, 0.3, M.steel, 0.002, tx - w / 2 + 0.11, 0.899, tz + d / 2 - 0.32));
+    root.add(tubeX(0.024, 0.14, M.steel, 8, tx - w / 2 - 0.03, 0.78, tz + d / 2 - 0.32));
     // a brass crab gauge hanging off the port lip
     const gauge = cbox(0.32, 0.08, 0.02, M.brass, 0.01, tx + w / 2 + 0.05, 0.84, tz + 0.5);
     gauge.rotation.y = Math.PI / 2;
@@ -1128,39 +1233,33 @@ export function makeBoat(): BoatArt {
   }
 
   // =============================================================================================
-  // CLUTTER: fenders and buoys over the side, the foredeck, the stern corners
+  // CLUTTER: tyres and buoy bunches hung on the topsides, a net over the starboard quarter, the bow,
+  // the stern corners behind the pot stack
   {
-    const hang = (obj: THREE.Object3D, side: 1 | -1, z: number, out = 0.1) => {
-      obj.position.set(side * (hullHalfWidth(z) + out), railHeight(z) + 0.08, z);
+    /** Hang `obj` (built with outboard = local +x) from the outer edge of the cap rail at station z. */
+    const hang = (obj: THREE.Object3D, side: 1 | -1, z: number) => {
+      obj.position.set(side * (hullHalfWidth(z) + 0.07), railHeight(z) + 0.085, z);
+      obj.rotation.y = sideYaw(side, z) - Math.PI / 2;
       root.add(obj);
     };
-    // tyre fenders (hang below the rub rail, clear of the launch/haul zone on starboard)
-    const tyre = (side: 1 | -1, z: number) => {
-      const top = railHeight(z) + 0.08;
-      hang(tyreFender(top + 0.5 - 0.3, 0.3), side, z, 0.13);
-    };
-    for (const z of [-7.4, -3.6, 4.7, 7.3]) tyre(-1, z);
-    for (const z of [-6.9, -2.2, 4.2, 6.8]) tyre(1, z);
-    // orange buoys in pairs
-    const buoyPair = (side: 1 | -1, z: number, colors: [number, number]) => {
-      for (let k = 0; k < 2; k++) {
-        const zz = z + (k - 0.5) * 0.5;
-        const top = railHeight(zz) + 0.08;
-        hang(hangingBuoy(top + 0.35 - 0.22 + k * 0.12, 0.22, colors[k]), side, zz, 0.27);
-      }
-    };
-    buoyPair(-1, -8.55, [C.orange, C.white]);
-    buoyPair(-1, 6.0, [C.orange, C.orange]);
-    buoyPair(1, -8.3, [C.white, C.orange]);
-    buoyPair(1, 0.9, [C.orange, C.orange]);
+    // tyre fenders just under the cap, on short ropes (starboard keeps the launch/haul zone clear)
+    for (const z of [-6.2, -2.8, 1.6, 4.6]) hang(tyreFender(0.35, 0.27), 1, z);
+    for (const z of [-5.6, -2.4, 4.4, 6.9]) hang(tyreFender(0.35, 0.27), -1, z);
     // transom tyres
     for (const x of [-1.7, 1.7]) {
-      const tf = tyreFender(1.09 + 0.45 - 0.3, 0.3);
+      const tf = tyreFender(0.35, 0.27);
       tf.rotation.y = Math.PI / 2;
-      tf.position.set(x, 1.09, STERN_Z - 0.14);
+      tf.position.set(x, railHeight(STERN_Z) + 0.085, STERN_Z - 0.07);
       root.add(tf);
     }
-    // foredeck: windlass and chain, bitts, net pile, crates, a barrel, the anchor at the bow
+    // tight bunches of buoys on short lanyards: both stern quarters and the port bow
+    hang(buoyBunch([C.orange, C.orange, C.white, C.orange], 1), -1, -8.75);
+    hang(buoyBunch([C.orange, C.white, C.orange], 2), 1, -8.25);
+    hang(buoyBunch([C.orange, C.orange, C.white], 3), 1, 6.3);
+    // a net thrown over the starboard quarter, spilling down the topsides
+    hang(netDrape(1.25, 0.78, 4), -1, -7.3);
+    // bow: windlass and chain, bitts, the anchor; a net pile and a barrel tucked against the
+    // bulwarks forward of the walkway mouths (z 7.6-8.3 stays clear)
     const wl = windlass();
     wl.position.set(0, 0, 9.0);
     root.add(wl);
@@ -1173,22 +1272,12 @@ export function makeBoat(): BoatArt {
     an.position.set(-(hullHalfWidth(9.55) + 0.09), 0.2, 9.55);
     an.rotation.y = sideYaw(-1, 9.55);
     root.add(an);
-    const np = netPile(1.05, 0.8, 0.46, 1);
-    np.position.set(-1.15, 0, 8.15);
+    const np = netPile(0.7, 0.8, 0.42, 1);
+    np.position.set(1.02, 0, 8.95);
+    np.rotation.y = -0.25;
     root.add(np);
-    const k1 = fishCrate(C.orange);
-    k1.position.set(1.0, 0, 7.92);
-    root.add(k1);
-    const k2 = fishCrate(C.orange, true);
-    k2.position.set(1.0, 0.29, 7.94);
-    k2.rotation.y = 0.08;
-    root.add(k2);
-    const k3 = fishCrate(0x2f8f9a);
-    k3.position.set(0.95, 0, 8.42);
-    k3.rotation.y = -0.12;
-    root.add(k3);
     const br = barrel('steel', C.blueBarrel);
-    br.position.set(1.72, 0, 7.98);
+    br.position.set(-1.1, 0, 8.86);
     root.add(br);
     // stern corners behind the pot stack
     const b1 = barrel('steel', 0xc8432f);
@@ -1200,9 +1289,13 @@ export function makeBoat(): BoatArt {
     const rc = ropeCoil(0.3, 3, C.greenRope);
     rc.position.set(-1.35, 0, -9.0);
     root.add(rc);
-    const sn = netPile(0.85, 0.55, 0.36, 2);
-    sn.position.set(1.25, 0, -9.0);
-    root.add(sn);
+    const sk1 = fishCrate(C.orange);
+    sk1.position.set(1.2, 0, -9.0);
+    root.add(sk1);
+    const sk2 = fishCrate(C.orange, true);
+    sk2.position.set(1.22, 0.29, -8.98);
+    sk2.rotation.y = 0.1;
+    root.add(sk2);
   }
 
   // gulls: one on the davit head, one on the wheelhouse roof rail
@@ -1239,14 +1332,13 @@ export function makeBoat(): BoatArt {
       // foredeck
       [0, 9.0, 1.15, 0.75],
       [0, 9.78, 0.8, 0.4],
-      [-1.15, 8.15, 1.35, 1.1],
-      [0.98, 8.15, 0.95, 1.1],
-      [1.72, 7.98, 0.8, 0.8],
+      [1.02, 8.95, 1.0, 1.05],
+      [-1.1, 8.86, 0.8, 0.8],
       // stern corners
       [2.3, -9.02, 0.8, 0.8],
       [-2.3, -9.02, 0.8, 0.8],
       [-1.35, -9.0, 0.85, 0.85],
-      [1.25, -9.0, 1.1, 0.8],
+      [1.2, -9.0, 0.85, 0.65],
       // wheelhouse interior
       [L.stove.center.x, L.stove.center.z, 1.0, 0.85],
       [L.galleyTable.center.x - 0.15, L.galleyTable.center.z, 1.3, 1.65],
@@ -1278,9 +1370,11 @@ export function makeBoat(): BoatArt {
     // on the roof (fades with it)
     const ry = roofTop + 0.006;
     const roofBlobs: [number, number, number, number][] = [
-      [-1.05, 3.75, 1.25, 0.75],
+      [-1.0, 4.55, 1.25, 0.75],
+      [-1.6, 3.5, 0.9, 0.65],
+      [-0.92, 3.47, 0.62, 0.85],
       [-1.3, 7.15, 0.75, 0.75],
-      [1.3, 6.55, 0.95, 1.3],
+      [1.32, 6.85, 0.85, 0.65],
       [0.25, 4.75, 0.6, 0.6],
       [-0.2, 4.45, 0.55, 0.55],
       [-0.45, 6.3, 0.8, 0.8],

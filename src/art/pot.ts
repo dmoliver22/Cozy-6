@@ -1,16 +1,17 @@
 /**
- * makePot(): 2 × 0.9 × 2 m king-crab pot: a galvanised round-bar frame on two skids, wire-mesh
- * panels (dithered alpha cutout, so the mesh stays crisp up close and reads as a veil far away),
- * orange webbing entrance tunnels, a hinged top door and a hanging bait jar with a bait bag.
- * Origin = pot centre. Handles let gameplay show bait, fullness, door, water streaming.
+ * makePot(): 2 × 0.9 × 2 m king-crab pot: a chunky galvanised round-bar frame with orange corner
+ * bumpers and skids, galvanised wire-mesh panels (procedural, anti-aliased wire up close that eases
+ * into a semi-opaque tinted panel at a distance or on Low, so a stack reads as stacked boxes),
+ * orange webbing entrance tunnels, a single hinged mesh door with a thin rim, and a hanging bait
+ * jar with a bait bag. Origin = pot centre. Handles let gameplay show bait, fullness, door, water.
  *
- * Static parts are folded with mergeStatic() (four draw calls per pot plus the door); the catch is
- * one instanced mesh.
+ * Static parts are folded with mergeStatic() (three draw calls per pot plus two for the door); the
+ * catch is one instanced mesh.
  */
 import * as THREE from 'three';
 import { config } from '../config';
 import { canvasTexture, mergeStatic, metal, plastic } from './materials';
-import { C, K, ball, bar, cbox, cylGeo, meshPanelMat, mergeMeshes, pal, tube, webbingMat } from './props';
+import { C, K, ball, bar, cbox, cylGeo, isLowTier, meshPanelMat, mergeMeshes, pal, tube, webbingMat } from './props';
 
 export interface PotView {
   root: THREE.Group;
@@ -24,7 +25,7 @@ export interface PotView {
   setNumber(n: number | null): void;
 }
 
-/** Wire mesh cells per metre (meshGridTex(8) has 8 cells per uv unit → ~12 cm cells). */
+/** Wire mesh cells per metre (8 cells per uv unit → ~12 cm cells). */
 const MESH_UV_PER_M = 1.05;
 /** Webbing diamonds: uv units per metre. */
 const WEB_UV_PER_M = 2.6;
@@ -100,91 +101,99 @@ function catchCrabGeometry(): THREE.BufferGeometry {
 
 export function makePot(): PotView {
   const [W, H, D] = config.fishing.potSize;
+  const low = isLowTier();
   const root = new THREE.Group();
   root.name = 'pot';
-  const frame = metal(0xc6ccd0, { rough: 0.34, metalness: 0.7 });
-  const wire = meshPanelMat(0x34424a, 8, { rough: 0.45, metalness: 0.45 });
+  const frame = metal(0xbcc4c8, { rough: 0.4, metalness: 0.6 });
+  const wire = meshPanelMat(C.galv, 8, { rough: 0.5, metalness: 0.3, wire: 0.06, panel: 0.45, panelOnly: low });
   const web = webbingMat(C.orange);
-  const r = 0.042; // round bar radius
+  const seg = low ? 6 : 8;
+  const r = 0.063; // round bar radius
   const hx = W / 2 - r,
     hy = H / 2 - r,
     hz = D / 2 - r;
 
-  // ---- frame: 12 edges, a mid-height belt, corner knuckles, and two skids underneath
+  // ---- frame: 12 chunky edges, a slim mid-height belt, orange corner bumpers and skids
   for (const y of [-hy, hy]) {
-    for (const z of [-hz, hz]) root.add(rodX(r, 2 * hx, frame, 0, y, z));
-    for (const x of [-hx, hx]) root.add(rodZ(r, 2 * hz, frame, x, y, 0));
+    for (const z of [-hz, hz]) root.add(rodX(r, 2 * hx, frame, 0, y, z, seg));
+    for (const x of [-hx, hx]) root.add(rodZ(r, 2 * hz, frame, x, y, 0, seg));
   }
-  for (const x of [-hx, hx]) for (const z of [-hz, hz]) root.add(rodY(r, 2 * hy, frame, x, 0, z));
-  for (const z of [-hz, hz]) root.add(rodX(r * 0.6, 2 * hx, frame, 0, 0.05, z, 6));
-  for (const x of [-hx, hx]) root.add(rodZ(r * 0.6, 2 * hz, frame, x, 0.05, 0, 6));
-  for (const x of [-hx, hx]) for (const y of [-hy, hy]) for (const z of [-hz, hz]) root.add(ball(r * 1.4, frame, 6, x, y, z));
-  for (const z of [-0.55, 0.55]) root.add(cbox(W - 0.06, 0.05, 0.1, frame, 0.02, 0, -H / 2 + 0.025, z));
+  for (const x of [-hx, hx]) for (const z of [-hz, hz]) root.add(rodY(r, 2 * hy, frame, x, 0, z, seg));
+  for (const z of [-hz, hz]) root.add(rodX(r * 0.45, 2 * hx, frame, 0, 0.02, z, 5));
+  for (const x of [-hx, hx]) root.add(rodZ(r * 0.45, 2 * hz, frame, x, 0.02, 0, 5));
+  for (const x of [-hx, hx]) for (const y of [-hy, hy]) for (const z of [-hz, hz]) root.add(solidWeb(ball(r * 1.25, frame, low ? 6 : 8, x, y, z), web));
+  for (const z of [-0.6, 0.6]) root.add(solidWeb(cbox(W - 0.1, 0.06, 0.12, frame, 0.025, 0, -H / 2 + 0.03, z), web));
 
-  // ---- wire mesh: four sides, the bottom, and the top around the door opening
-  const inset = 0.012;
+  // ---- wire mesh at the bar centrelines: four sides, the bottom, and the top around the door
   const sides: [THREE.PlaneGeometry, number, number, number, number, number][] = [
-    [panel(W - 2 * r, H - 2 * r, MESH_UV_PER_M), 0, 0, D / 2 - inset, 0, 0],
-    [panel(W - 2 * r, H - 2 * r, MESH_UV_PER_M), 0, 0, -D / 2 + inset, 0, 0],
-    [panel(D - 2 * r, H - 2 * r, MESH_UV_PER_M), W / 2 - inset, 0, 0, 0, Math.PI / 2],
-    [panel(D - 2 * r, H - 2 * r, MESH_UV_PER_M), -W / 2 + inset, 0, 0, 0, Math.PI / 2],
-    [panel(W - 2 * r, D - 2 * r, MESH_UV_PER_M), 0, -H / 2 + 0.06, 0, Math.PI / 2, 0],
+    [panel(2 * hx, 2 * hy, MESH_UV_PER_M), 0, 0, hz, 0, 0],
+    [panel(2 * hx, 2 * hy, MESH_UV_PER_M), 0, 0, -hz, 0, 0],
+    [panel(2 * hz, 2 * hy, MESH_UV_PER_M), hx, 0, 0, 0, Math.PI / 2],
+    [panel(2 * hz, 2 * hy, MESH_UV_PER_M), -hx, 0, 0, 0, Math.PI / 2],
+    [panel(2 * hx, 2 * hz, MESH_UV_PER_M), 0, -hy, 0, Math.PI / 2, 0],
   ];
   const dh = 0.42; // half size of the door opening
-  const topY = H / 2 - inset;
-  const tw = (W - 2 * r) / 2 - dh; // strips either side of the opening
-  sides.push([panel(tw, D - 2 * r, MESH_UV_PER_M), -(dh + tw / 2), topY, 0, Math.PI / 2, 0]);
-  sides.push([panel(tw, D - 2 * r, MESH_UV_PER_M), dh + tw / 2, topY, 0, Math.PI / 2, 0]);
-  const td = (D - 2 * r) / 2 - dh;
-  sides.push([panel(2 * dh, td, MESH_UV_PER_M), 0, topY, -(dh + td / 2), Math.PI / 2, 0]);
-  sides.push([panel(2 * dh, td, MESH_UV_PER_M), 0, topY, dh + td / 2, Math.PI / 2, 0]);
+  const tw = hx - dh; // strips either side of the opening
+  sides.push([panel(tw, 2 * hz, MESH_UV_PER_M), -(dh + tw / 2), hy, 0, Math.PI / 2, 0]);
+  sides.push([panel(tw, 2 * hz, MESH_UV_PER_M), dh + tw / 2, hy, 0, Math.PI / 2, 0]);
+  const td = hz - dh;
+  sides.push([panel(2 * dh, td, MESH_UV_PER_M), 0, hy, -(dh + td / 2), Math.PI / 2, 0]);
+  sides.push([panel(2 * dh, td, MESH_UV_PER_M), 0, hy, dh + td / 2, Math.PI / 2, 0]);
   for (const [g, x, y, z, rx, ry] of sides) {
     const m = new THREE.Mesh(g, wire);
     m.position.set(x, y, z);
     m.rotation.set(rx, ry, 0);
+    m.castShadow = false;
     m.receiveShadow = true;
     root.add(m);
   }
-  // the door opening's frame
-  for (const z of [-dh, dh]) root.add(rodX(r * 0.6, 2 * dh + r, frame, 0, hy, z, 6));
-  for (const x of [-dh, dh]) root.add(rodZ(r * 0.6, 2 * dh + r, frame, x, hy, 0, 6));
 
-  // ---- entrance tunnels: orange webbing funnels on two opposite sides
+  // ---- entrance tunnels: orange webbing funnels on two opposite sides (clear of the catch)
+  const tunY = -0.05;
   for (const s of [-1, 1]) {
-    const g = new THREE.CylinderGeometry(0.14, 0.36, 0.55, 12, 1, true);
+    const len = 0.5;
+    const g = new THREE.CylinderGeometry(0.12, 0.29, len, low ? 8 : 12, 1, true);
     const uv = g.attributes.uv as THREE.BufferAttribute;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 2 * Math.PI * 0.25 * WEB_UV_PER_M, uv.getY(i) * 0.55 * WEB_UV_PER_M);
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 2 * Math.PI * 0.24 * WEB_UV_PER_M, uv.getY(i) * len * WEB_UV_PER_M);
     const tun = new THREE.Mesh(g, web);
     tun.rotation.z = (s * Math.PI) / 2;
-    tun.position.set(s * (W / 2 - 0.29), -0.08, 0);
+    tun.position.set(s * (hx - len / 2 + 0.005), tunY, 0);
+    tun.castShadow = false;
     root.add(tun);
     // the funnel mouth ring and the trigger bars at the narrow end
-    const mouth = solidWeb(new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.022, 3, 12), web), web);
+    const mouth = solidWeb(new THREE.Mesh(new THREE.TorusGeometry(0.29, 0.024, 3, low ? 8 : 12), web), web);
     mouth.rotation.y = Math.PI / 2;
-    mouth.position.set(s * (W / 2 - 0.02), -0.08, 0);
+    mouth.position.set(s * hx, tunY, 0);
     root.add(mouth);
-    root.add(bar(s * (W / 2 - 0.56), 0.06, -0.12, s * (W / 2 - 0.56), -0.22, -0.12, 0.012, frame, 4));
-    root.add(bar(s * (W / 2 - 0.56), 0.06, 0.12, s * (W / 2 - 0.56), -0.22, 0.12, 0.012, frame, 4));
+    const tx = s * (hx - len - 0.02);
+    root.add(bar(tx, tunY + 0.14, -0.1, tx, tunY - 0.13, -0.1, 0.012, frame, 4));
+    root.add(bar(tx, tunY + 0.14, 0.1, tx, tunY - 0.13, 0.1, 0.012, frame, 4));
   }
-  // ID tag and a bungee hook for the door
-  root.add(solidWeb(cbox(0.18, 0.11, 0.02, frame, 0.01, W / 2 - 0.3, hy - 0.09, D / 2 + 0.012), web));
-  root.add(solidWeb(cbox(0.18, 0.11, 0.02, frame, 0.01, -W / 2 + 0.3, hy - 0.09, -D / 2 - 0.012), web));
-  root.add(solidWeb(cbox(0.05, 0.05, 0.16, frame, 0.015, dh + 0.07, hy + 0.035, 0), web));
+  // ID tags and the bungee hook that holds the door shut
+  root.add(solidWeb(cbox(0.2, 0.12, 0.025, frame, 0.01, W / 2 - 0.34, hy - 0.12, hz + 0.02), web));
+  root.add(solidWeb(cbox(0.2, 0.12, 0.025, frame, 0.01, -W / 2 + 0.34, hy - 0.12, -hz - 0.02), web));
+  root.add(solidWeb(cbox(0.06, 0.05, 0.18, frame, 0.015, dh + 0.1, hy + 0.04, 0), web));
+  root.add(bar(dh + 0.1, hy + 0.06, 0, dh - 0.02, hy + 0.06, 0, 0.012, frame, 4));
 
-  // ---- the door (hinged on its −x edge; gameplay rotates it about z)
+  // ---- the door: one hinged mesh panel with a thin rim, lying in the top (hinged on its −x edge;
+  // gameplay rotates it about z)
   const door = new THREE.Group();
   door.name = 'dyn:door';
   {
-    const s = 0.4;
-    for (const z of [-s + 0.02, s - 0.02]) door.add(rodX(0.024, 0.8, frame, s, 0, z, 6));
-    for (const x of [0.02, 0.78]) door.add(rodZ(0.024, 0.8, frame, x, 0, 0, 6));
-    const dm = new THREE.Mesh(panel(0.76, 0.76, MESH_UV_PER_M), wire);
+    const ds = 2 * dh + 0.04; // overlaps the opening a little so no gap shows
+    const rr = 0.02;
+    const dm = new THREE.Mesh(panel(ds, ds, MESH_UV_PER_M), wire);
     dm.rotation.x = Math.PI / 2;
-    dm.position.set(s, 0, 0);
+    dm.position.set(ds / 2, 0, 0);
+    dm.castShadow = false;
     door.add(dm);
-    door.add(cbox(0.05, 0.04, 0.12, frame, 0.012, 0.8, 0.02, 0));
+    for (const z of [-ds / 2, ds / 2]) door.add(rodX(rr, ds, frame, ds / 2, 0, z, 5));
+    for (const x of [0, ds]) door.add(rodZ(rr, ds, frame, x, 0, 0, 5));
+    // hinge knuckles and the latch tab
+    for (const z of [-0.25, 0.25]) door.add(ball(0.035, frame, 6, 0, 0, z));
+    door.add(cbox(0.06, 0.03, 0.12, frame, 0.01, ds + 0.02, 0.0, 0));
   }
-  door.position.set(-0.4, H / 2 + 0.01, 0);
+  door.position.set(-dh - 0.02, hy + 0.022, 0);
   root.add(door);
 
   // ---- bait: a jar hung from the top centre and a webbing bait bag beside it (shown when baited)
@@ -219,7 +228,7 @@ export function makePot(): PotView {
     const q = new THREE.Quaternion();
     const e = new THREE.Euler();
     for (let i = 0; i < MAXC; i++) {
-      const x = ((i % 3) - 1) * 0.5 + Math.sin(i * 2.3) * 0.08;
+      const x = ((i % 3) - 1) * 0.4 + Math.sin(i * 2.3) * 0.06;
       const z = (Math.floor(i / 3) - 1) * 0.5 + Math.cos(i * 1.7) * 0.08;
       e.set(0, i * 1.9, Math.sin(i) * 0.15);
       m.compose(new THREE.Vector3(x, -H / 2 + 0.06, z), q.setFromEuler(e), new THREE.Vector3(1, 1, 1).multiplyScalar(0.9 + (i % 4) * 0.08));
@@ -253,12 +262,8 @@ export function makePot(): PotView {
   mergeStatic(door);
   mergeStatic(bait);
   mergeStatic(root);
-  for (const ch of root.children) {
-    const mesh = ch as THREE.Mesh;
-    if (mesh.isMesh && mesh.name === 'merged' && (mesh.material === wire || mesh.material === web)) mesh.castShadow = false;
-  }
-  for (const ch of door.children) {
-    const mesh = ch as THREE.Mesh;
+  for (const o of [...root.children, ...door.children]) {
+    const mesh = o as THREE.Mesh;
     if (mesh.isMesh && mesh.material === wire) mesh.castShadow = false;
   }
 
