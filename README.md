@@ -48,7 +48,7 @@ JavaScript. It gives the same results but runs slower. See NOTES.md for what the
 | Action | Desktop | Gamepad | Phone |
 |---|---|---|---|
 | Move | WASD / arrows | Left stick | Left thumb stick |
-| Grab / use (hold to carry) | Left mouse | A | **Action** button (does what it shows) |
+| Pick up / use (click again to put down or place) | Left mouse | A | **Action** button (tap; it shows what it will do) |
 | Aim & throw | Hold right mouse, release | Hold RT, release | Drag the Action button (slingshot) |
 | Interact (levers, re-hook, chip, pet) | E | X | Action button (it switches to that verb) |
 | **Brace** (hold) | Shift or Space | LB | **BRACE** button |
@@ -88,6 +88,11 @@ skip to the second haul.
 
 Nobody drowns: overboard crew get a life ring (throw it, then pull them in), and the crane
 fishes them out after 25 s.
+
+Carrying is a toggle: pick something up and it stays in your hands until you click or tap
+again, which puts it down, or places it if you're aiming at a spot that takes it (bait into
+a pot, a crab into the hatch). If you'd rather hold the button to carry, turn on **Hold to
+carry** in the pause menu.
 
 ## Settings
 
