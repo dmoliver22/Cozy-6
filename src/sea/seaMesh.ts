@@ -76,21 +76,23 @@ const _v = new THREE.Vector3();
 const _c = new THREE.Color();
 
 /**
- * The sea's palette (linear, before tone mapping) for the golden-hour and storm poles: the art
- * director's deep, desaturated teal (golden troughs ~#1d3032, lit swell ~#2e474b on screen; storm
- * troughs darker and crests lighter so the swell keeps its form) and a green-teal crest glow. The
- * live look still steers it: each colour is scaled by how far the look's own sea colour sits from
+ * The sea's palette (linear, before tone mapping) for the golden-hour and storm poles: a rich
+ * blue-teal at golden hour (aiming at the reference's troughs ~#1a3236 and mid-tones ~#304a4e on
+ * screen, with the lit swell backs lighter and warmer from the sun term; storm troughs darker and
+ * crests lighter so the swell keeps its form) and a blue-teal crest glow. The live look still
+ * steers it: each colour is scaled by how far the look's own sea colour sits from
  * its value at the same storm amount (1 when the look is untouched), so a runtime change to
  * look.sea moves the sea with it. Retuning GOLDEN/STORM.sea in look.ts does not (the reference
  * moves too): scale these by the same ratio.
  */
 const PALETTE = {
-  golden: { deep: new THREE.Color(0.012, 0.0314, 0.031), mid: new THREE.Color(0.0349, 0.075, 0.0734), sub: new THREE.Color(0x3e8c7e) },
+  golden: { deep: new THREE.Color(0.016, 0.04, 0.046), mid: new THREE.Color(0.048, 0.1, 0.104), sub: new THREE.Color(0x3a8796) },
   storm: { deep: new THREE.Color(0.0142, 0.0283, 0.0365), mid: new THREE.Color(0.0755, 0.1274, 0.1314), sub: new THREE.Color(0x4f7f78) },
 };
 const LOOK_GOLDEN = computeLook(0, 0, goldenLook());
 const LOOK_STORM = computeLook(1, 0, goldenLook());
-const GOLD = new THREE.Color(0xffc77a);
+// pale gold: the low sun's own orange, laid over blue water, read as sepia
+const GOLD = new THREE.Color(0xffe2b8);
 const GOLDEN_SUN = LOOK_GOLDEN.sunIntensity * ((LOOK_GOLDEN.sunColor.r + LOOK_GOLDEN.sunColor.g + LOOK_GOLDEN.sunColor.b) / 3);
 
 /** out = lerp(pal.golden, pal.storm, t) × clamp(look / lerp(lookGolden, lookStorm, t)) per channel. */
@@ -120,6 +122,10 @@ export class SeaMesh {
   private lastTime = -1;
   private lastBoatY = 0;
   private heaveRate = 0;
+  /** metres the stern has travelled (wrapped), so the wake's streaks stay put in the water */
+  private odo = 0;
+  private odoX = NaN;
+  private odoZ = NaN;
   /** renders since the last applyLook(); the sea looks after itself if nobody drives it */
   private rendersSinceLook = 0;
   private ownLook = goldenLook();
@@ -169,6 +175,8 @@ export class SeaMesh {
       uSeaLight: { value: new THREE.Vector4(1, 2.2, 1.8, 0) },
       uMarkers: { value: seaWorld.markers.map(() => new THREE.Vector4()) },
       uDetail: { value: seaDetailTexture() },
+      uRows: { value: new THREE.Vector4() },
+      uWakeOdo: { value: 0 },
       uWind: { value: wind },
       uWake: { value: Array.from({ length: WAKE_N }, () => new THREE.Vector4()) },
       uWakeBox: { value: new THREE.Vector4(0, 0, 0, 0) },
@@ -239,14 +247,18 @@ export class SeaMesh {
     // the sun's highlight: its colour pushed toward gold, max channel 1 (intensity is separate)
     const sc = look.sunColor;
     const m = Math.max(sc.r, sc.g, sc.b, 1e-3);
-    _c.setRGB(sc.r / m, sc.g / m, sc.b / m).lerp(GOLD, 0.5);
+    _c.setRGB(sc.r / m, sc.g / m, sc.b / m).lerp(GOLD, 0.72);
     (u.uSpecTint.value as THREE.Color).copy(_c).multiplyScalar(1 / Math.max(_c.r, _c.g, _c.b, 1e-3));
     (u.uSeaParams.value as THREE.Vector4).set(look.sea.glitter, look.sea.roughness, look.sea.reflect, look.sunDisc);
     (u.uSeaState.value as THREE.Vector4).w = t;
     const sunLum = look.sunIntensity * ((sc.r + sc.g + sc.b) / 3);
     // x sun strength vs golden hour, y how much the swell's slope is exaggerated for shading
-    // (a lot in the low calm swell, little in the storm's big one), z sun luminance
-    (u.uSeaLight.value as THREE.Vector4).set(THREE.MathUtils.clamp(sunLum / GOLDEN_SUN, 0, 1), 1.6 - 0.4 * t, sunLum, 0);
+    // (a lot in the low calm swell, little in the storm's big one), z sun luminance, w the
+    // shading-only chop relief (the storm's real swell carries its own form)
+    (u.uSeaLight.value as THREE.Vector4).set(THREE.MathUtils.clamp(sunLum / GOLDEN_SUN, 0, 1), 1.6 - 0.4 * t, sunLum, config.sea.relief * (1 - 0.45 * t));
+    // swell rows: a little gentler in the storm, whose big swell carries its own form
+    const R = config.sea.rows;
+    (u.uRows.value as THREE.Vector4).set(R.gain * (1 - 0.35 * t), R.form * (1 - 0.3 * t), R.speed, R.crest * (1 - 0.4 * t));
   }
 
   /** Wind for the storm streaks and detail drift (world XZ direction, strength 0..1). Optional. */
@@ -311,6 +323,13 @@ export class SeaMesh {
     }
     this.lastBoatY = by;
     (u.uBoatHeave.value as THREE.Vector2).set(this.heaveRate, 0);
+    const step = Math.hypot(stern.x - this.odoX, stern.z - this.odoZ);
+    // (NaN on the first frame; teleports skipped; wrapped where the hashes keep their precision,
+    // a pattern jump in the wake about every half hour of steaming)
+    if (step < 5) this.odo = (this.odo + step) % 8192;
+    this.odoX = stern.x;
+    this.odoZ = stern.z;
+    (u.uWakeOdo as { value: number }).value = this.odo;
     this.updateWake(stern.x, stern.z, renderTime, speed);
     this.lastTime = renderTime;
 

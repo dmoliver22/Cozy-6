@@ -118,7 +118,7 @@ const GOLDEN = {
     bloomThreshold: 0.85,
     bloomRadius: 0.5,
     tiltShift: 1.0,
-    tiltBelow: 0.8,
+    tiltBelow: 0.65,
   },
 };
 

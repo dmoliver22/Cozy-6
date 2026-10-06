@@ -1,8 +1,10 @@
 /**
  * Spray & splash particles, one Points cloud per owner (world space, or boat-local when added
- * under the boat group). Two kinds share a cloud:
+ * under the boat group). The kinds share a cloud:
  *   droplets  small, bright, stretched along their screen-space motion
  *   mist      big soft puffs that hang, spread and fade (the white haze of a splash)
+ *   spray     dense, lumpy, bright puffs thrown off the bow wave, their rims glowing warm when
+ *             the low sun is behind them (they must read at the overhead zoom)
  * Both are lit by the shared sea light: warm when the low sun is behind them (forward scattering,
  * the "sunlit spray" look), cool sky fill otherwise. Ice shards use the same cloud with a
  * faceted, glinting sprite.
@@ -14,7 +16,7 @@ const VERT = /* glsl */ `
 attribute float aSize;
 attribute float aAlpha;
 attribute vec3 aVel;
-attribute vec2 aMeta; // seed, kind (0 droplet, 1 mist, 2 big soft puff)
+attribute vec2 aMeta; // seed, kind (0 droplet, 1 mist, 2 big soft puff, 3 bow spray puff)
 uniform float uScale;
 uniform vec2 uViewport;
 uniform float uMaxPx; // droplet size cap: 6 px at the drawing buffer's pixel ratio
@@ -27,6 +29,7 @@ varying float vAlpha;
 varying vec3 vCol;
 varying vec3 vStretch; // screen dir (point-coord frame), elongation
 varying vec2 vMeta;
+varying vec3 vRim;    // warm rim light on spray puffs (the sun behind them)
 void main() {
   vAlpha = aAlpha;
   vMeta = aMeta;
@@ -44,6 +47,9 @@ void main() {
   // pixels either (a droplet near the camera must not become a white blob). Mist may grow more:
   // it is soft and faint, the haze over a splash
   gl_PointSize = clamp(size * el, 2.5, max(2.5, uMaxPx * (aMeta.y > 0.5 ? 4.0 : 1.0)));
+  // sized for the distance: a droplet smaller than the 2.5 px floor fades instead of drawing as a
+  // full-strength dot (far spray reads as a faint haze, not paper confetti)
+  vAlpha *= clamp(size * el / 2.5, 0.3, 1.0);
   // fade out within 6 m of the camera (spray drifting past the lens in first person)
   vAlpha *= smoothstep(2.0, 6.0, -mv.z);
   gl_Position = c1;
@@ -61,6 +67,9 @@ void main() {
   vec3 warm = pow(uSunTint, vec3(1.6)) * (1.4 + 0.3 * sunLum) * (1.0 + 0.5 * back);
   float mist = step(0.5, aMeta.y);
   vCol = mix(sky, warm, (0.75 - 0.12 * mist) * sunlit) + uSun * back * (0.25 - 0.15 * mist) * sunUp;
+  // (a broad lobe: from the overhead camera the sun is never quite behind the puff)
+  float backW = pow(max(dot(view, uSunDir) * 0.5 + 0.5, 0.0), 2.0);
+  vRim = warm * (0.35 + 1.1 * backW) * sunUp;
 }`;
 
 const FRAG = /* glsl */ `
@@ -69,6 +78,7 @@ varying float vAlpha;
 varying vec3 vCol;
 varying vec3 vStretch;
 varying vec2 vMeta;
+varying vec3 vRim;
 void main() {
   vec2 c = gl_PointCoord - 0.5;
   vec2 d = vStretch.xy;
@@ -84,6 +94,21 @@ void main() {
     if (dm > 0.48) discard;
     a = 1.0;
     col *= 0.85 + 0.5 * step(0.5, fract(vMeta.x * 7.0)) * (1.0 - smoothstep(0.0, 0.2, dm));
+  } else if (vMeta.y > 2.5) {
+    // bow spray: a lumpy cluster of four lobes (a cauliflower outline, never a round disc), white
+    // in the body, the sun's warmth only in its rim
+    vec2 p = q * 2.0;
+    float sd = vMeta.x * 17.0;
+    float rr = 9.0;
+    for (int k = 0; k < 4; k++) {
+      float fk = float(k);
+      vec2 o = (vec2(fract(sin(sd + fk * 3.1) * 43.7), fract(sin(sd * 1.3 + fk * 5.7) * 31.3)) - 0.5) * 0.9;
+      rr = min(rr, length(p - o) / (0.32 + 0.22 * fract(sd * 0.37 + fk * 0.61)));
+    }
+    a = 1.0 - smoothstep(0.35, 1.0, rr);
+    float rim = smoothstep(0.5, 0.85, rr) * (1.0 - smoothstep(0.85, 1.0, rr));
+    col = vec3(dot(col, vec3(0.3333)) * 1.25) * vec3(1.02, 1.0, 0.95) * (0.85 + 0.15 * (1.0 - min(rr, 1.0))) + vRim * rim * 1.5;
+    a = max(a * 0.9, rim * 0.5);
   } else if (vMeta.y > 1.5) {
     // big soft puff: a faint, warm haze hanging over a splash
     a = (1.0 - smoothstep(0.0, 1.0, r));
@@ -96,12 +121,16 @@ void main() {
     a *= a * 0.55;
   } else {
     // droplet: bright core, soft rim, a tiny highlight
-    a = 1.0 - smoothstep(0.45, 1.0, r);
+    a = 1.0 - smoothstep(0.3, 1.0, r);
     col *= 1.0 + 0.45 * (1.0 - smoothstep(0.0, 0.35, length(q - vec2(-0.12, -0.12))));
   }
-  gl_FragColor = vec4(col, a * vAlpha);
+  // premultiplied alpha (blended One, OneMinusSrcAlpha): the soft rim fades to nothing, never to
+  // a fringe of the sprite's colour; tone mapped before the multiply
+  gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
+  float alpha = a * vAlpha;
+  gl_FragColor = vec4(gl_FragColor.rgb * alpha, alpha);
 }`;
 
 export interface CloudStyle {
@@ -169,6 +198,7 @@ export class ParticleCloud {
       fragmentShader: FRAG,
       transparent: true,
       depthWrite: false,
+      premultipliedAlpha: true,
     });
     this.points = new THREE.Points(g, this.mat);
     this.points.frustumCulled = false;
@@ -186,7 +216,7 @@ export class ParticleCloud {
     this.mat.uniforms.uMaxPx.value = 6 * Math.max(1, h / Math.max(1, window.innerHeight));
   }
 
-  /** `kind` 0 = droplet, 1 = mist puff, 2 = big soft puff (faint haze over a splash). */
+  /** `kind` 0 = droplet, 1 = mist puff, 2 = big soft puff (faint haze over a splash), 3 = bow spray puff. */
   emit(p: THREE.Vector3, v: THREE.Vector3, life: number, size: number, kind = 0): void {
     const i = this.next;
     this.next = (this.next + 1) % this.capacity;
@@ -299,7 +329,11 @@ export class ParticleCloud {
       this.pos[i * 3 + 2] += this.vel[i * 3 + 2] * dt;
       const t = Math.max(0, this.life[i] / this.maxLife[i]); // 1 → 0
       const age = 1 - t;
-      if (mist) {
+      if (this.meta[i * 2 + 1] > 2.5) {
+        // bow spray: dense for most of its life, thinning out at the end
+        this.alpha[i] = Math.min(1, age * 10) * Math.min(1, t * 2.2);
+        this.size[i] = this.baseSize[i] * (0.65 + age * 0.9);
+      } else if (mist) {
         this.alpha[i] = Math.min(1, age * 8) * t;
         this.size[i] = this.baseSize[i] * (0.6 + age * 1.1);
       } else {

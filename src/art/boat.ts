@@ -1,10 +1,11 @@
 /**
  * makeBoat(): the Puffin, a chunky toy-diorama crabber built from code geometry.
  *
- * Painted plank hull with a varnished cap rail, rub rail, cream sheer stripe and boot-top; a
- * clapboard wheelhouse with framed, warmly lit windows, a cluttered roof, mast, crane and rigging;
- * working gear in galvanised steel, teal machinery paint and orange; and the clutter that makes a
- * working boat (tyre fenders, hanging buoys, crates, barrels, nets, rope coils).
+ * Varnished honey-teak plank hull (HULL_FINISH in props.ts; the older red paint is kept as an
+ * option) with a narrow red-orange sheer stripe, a varnished cap rail, rub rail and a dark
+ * boot-top; a clapboard wheelhouse with framed, warmly lit windows, a cluttered roof, mast, crane
+ * and rigging; working gear in galvanised steel, teal machinery paint and orange; and the clutter
+ * that makes a working boat (tyre fenders, hanging buoys, crates, barrels, nets, rope coils).
  *
  * Static art is folded with mergeStatic() into one mesh per material. Moving parts live in
  * groups named "dyn:*"; the dollhouse cutaway parts (upper walls, roof and everything on it) are

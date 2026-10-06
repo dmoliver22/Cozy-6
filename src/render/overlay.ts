@@ -213,6 +213,7 @@ export function makeBeacon(color: number): BeaconView {
       label.userData.aspect = w / 72;
     },
     update(camera, anchor, groundAt, time, px, dpr) {
+      label.visible = labelText !== null;
       const ty = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
       // metres per pixel at the anchor's distance
       const mpp = (2 * ty * Math.max(0.1, camera.position.distanceTo(anchor))) / Math.max(1, px / dpr);
