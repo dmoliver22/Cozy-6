@@ -8,8 +8,11 @@ import { config } from '../config';
 import { makeBoat } from '../art/boat';
 import { makeCrew, CREW_LOOKS } from '../art/crew';
 import { makeCrab } from '../art/crab';
-import { toon, toonUnique, box, cyl, canvasTexture } from '../art/materials';
+import { toon, toonUnique, paint, box, cyl, canvasTexture } from '../art/materials';
 import { Snow } from '../weather/snow';
+import { harborLook, type Look } from '../render/look';
+import { SkyDome, SkyEnv, skyFromLook } from '../render/sky';
+import { rippleNormalTex } from '../render/textures';
 import { appraise, UPGRADES, HAT_COLORS, type Appraisal, type TankEntry } from './market';
 import type { SaveData } from '../core/save';
 import { sfx, music } from '../audio';
@@ -30,7 +33,8 @@ function sign(text: string, color: string): THREE.Mesh {
     g.textBaseline = 'middle';
     g.fillText(text, 256, 68);
   });
-  return new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.8), new THREE.MeshBasicMaterial({ map: tex }));
+  // a painted board, lit by the sunset like everything else
+  return new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.8), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.75 }));
 }
 
 function building(w: number, h: number, d: number, wall: number, label: string, labelColor: string): THREE.Group {
@@ -56,7 +60,7 @@ function building(w: number, h: number, d: number, wall: number, label: string, 
   for (const x of [-w * 0.28, w * 0.28]) g.add(box(0.7, 0.6, 0.05, win, x, h * 0.55, d / 2 + 0.01));
   g.add(box(0.9, 1.6, 0.05, toon(0x3a2a20), 0, 0.8, d / 2 + 0.01));
   const s = sign(label, labelColor);
-  s.position.set(0, h + 0.1, d / 2 + 0.06);
+  s.position.set(0, h + 0.1, d / 2 + 0.24); // in front of the roof's gable end, not inside it
   g.add(s);
   const lamp = new THREE.PointLight(P.amber, 6, 9, 1.6);
   lamp.position.set(0, h * 0.6, d / 2 + 1.2);
@@ -67,6 +71,11 @@ function building(w: number, h: number, d: number, wall: number, label: string, 
 export class Harbor {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
+  /** golden sunset (src/render/look.ts); the stage grades the frame with it */
+  readonly look: Look;
+  private sky: SkyDome;
+  private env: SkyEnv | null = null;
+  private seaNormal: THREE.Texture;
   readonly ui: HTMLDivElement;
   private snow: Snow;
   private boat: THREE.Group;
@@ -95,23 +104,48 @@ export class Harbor {
   ) {
     this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.2, 300);
     const sc = this.scene;
-    sc.background = new THREE.Color(0x5a5f8a);
-    sc.fog = new THREE.Fog(0x6a6f97, 28, 80);
-    sc.add(new THREE.HemisphereLight(0xdfe4ff, 0x6a7080, 2.0));
-    const moon = new THREE.DirectionalLight(0xe8ecff, 1.4);
-    moon.position.set(-20, 30, 10);
-    sc.add(moon);
-    const warm = new THREE.DirectionalLight(0xffc890, 0.8);
-    warm.position.set(10, 8, 20);
-    sc.add(warm);
-    // sea
-    const sea = new THREE.Mesh(new THREE.PlaneGeometry(300, 300), new THREE.MeshToonMaterial({ color: 0x173f4a }));
+    // golden sunset: the camera looks up the street (−Z); the low sun is behind it, to the
+    // right, raking warm light across the shop fronts while the sky above them goes violet
+    const hl = (this.look = harborLook(Math.PI));
+    sc.fog = new THREE.Fog(hl.fogColor, hl.fogNear, hl.fogFar);
+    sc.add(new THREE.HemisphereLight(hl.hemiSky, hl.hemiGround, hl.hemiIntensity * 0.6));
+    const sun = new THREE.DirectionalLight(hl.sunColor, hl.sunIntensity);
+    sun.position.copy(hl.sunDir).multiplyScalar(40).add(new THREE.Vector3(-1, 0, -5));
+    sun.target.position.set(-1, 0, -5);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    const ssc = sun.shadow.camera;
+    ssc.left = -18;
+    ssc.right = 18;
+    ssc.top = 12;
+    ssc.bottom = -12;
+    ssc.near = 5;
+    ssc.far = 90;
+    sun.shadow.bias = -0.0005;
+    sun.shadow.normalBias = 0.04;
+    sun.shadow.radius = 3;
+    sun.shadow.intensity = 0.8;
+    sc.add(sun, sun.target);
+    const rim = new THREE.DirectionalLight(hl.rimColor, hl.rimIntensity);
+    rim.position.set(-20, 18, -30);
+    sc.add(rim);
+    this.sky = new SkyDome(140);
+    skyFromLook(this.sky.uniforms, hl, 0, { clouds: 1.3 });
+    sc.add(this.sky.mesh);
+    // still harbour water: deep teal, glossy, wind ripples (reflects the sunset sky)
+    this.seaNormal = rippleNormalTex().clone();
+    this.seaNormal.repeat.set(40, 40);
+    this.seaNormal.needsUpdate = true;
+    const seaMat = new THREE.MeshStandardMaterial({ color: hl.sea.mid, roughness: 0.16, metalness: 0.0, normalMap: this.seaNormal, normalScale: new THREE.Vector2(0.16, 0.16), envMapIntensity: 1.1 });
+    const sea = new THREE.Mesh(new THREE.PlaneGeometry(300, 300), seaMat);
     sea.rotation.x = -Math.PI / 2;
     sea.position.y = -0.6;
+    sea.receiveShadow = true;
     sc.add(sea);
     // snowy shore
-    const shore = new THREE.Mesh(new THREE.BoxGeometry(80, 1, 22), toon(0xeef3f7));
+    const shore = new THREE.Mesh(new THREE.BoxGeometry(80, 1, 22), paint(0xeef3f7, { rough: 0.85, wear: 0.3 }));
     shore.position.set(0, -0.3, -14);
+    shore.receiveShadow = true;
     sc.add(shore);
     // dock
     const dockMat = toon(P.wood);
@@ -329,8 +363,16 @@ export class Harbor {
     );
   }
 
-  update(dt: number, renderer: THREE.WebGLRenderer): void {
+  update(dt: number, renderer: THREE.WebGLRenderer, draw?: (scene: THREE.Scene, camera: THREE.Camera, look: Look) => void): void {
     this.t += dt;
+    if (!this.env) {
+      this.env = new SkyEnv(renderer, 256);
+      this.scene.environment = this.env.update(this.sky.uniforms);
+      this.scene.environmentIntensity = 0.7;
+    }
+    this.sky.uniforms.uSkyTime.value = this.t;
+    this.sky.mesh.position.copy(this.camera.position);
+    this.seaNormal.offset.set(this.t * 0.004, this.t * 0.0025);
     // camera dolly between stops
     if (this.camT < 1) this.camT = Math.min(1, this.camT + dt / 1.6);
     const k = easeInOut(this.camT);
@@ -361,6 +403,7 @@ export class Harbor {
     this.needle.rotation.z = -Math.min(2.6, onScale * 0.07) + Math.sin(this.t * 6) * 0.01;
     this.model.root.rotation.y = 0.3 + Math.sin(this.t * 0.6) * 0.4;
     this.snow.update(this.t, this.camera.position, new THREE.Vector2(0.4, 0.2), 0.2, 0.7, window.innerHeight * renderer.getPixelRatio(), 0);
-    renderer.render(this.scene, this.camera);
+    if (draw) draw(this.scene, this.camera, this.look);
+    else renderer.render(this.scene, this.camera);
   }
 }

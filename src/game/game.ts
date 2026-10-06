@@ -260,12 +260,8 @@ export class Game {
 
     this.trip = new Trip(this.ctx, this.ui);
     this.trip.onEnd = () => this.endTrip();
-    this.photos = new PhotoDirector(this.ctx, this.stage.renderer, this.stage.scene, () => this.hud.flash('rgba(255,255,255,.9)'), () => {
-      // make sure the boat (and everything parented to it) is where the simulation says
-      this.boatGroup.position.copy(this.boat.pos);
-      this.boatGroup.quaternion.copy(this.boat.quat);
-      this.boatGroup.updateMatrixWorld(true);
-    });
+    // photos are shot right after a frame is drawn (scene matches the screen) and graded by the post pipeline
+    this.photos = new PhotoDirector(this.ctx, this.stage, () => this.hud.flash('rgba(255,255,255,.9)'));
     this.applyProgress();
 
     // audio unlock on any gesture
@@ -471,11 +467,11 @@ export class Game {
   render(alpha: number, dtReal: number, dtSim: number): void {
     this.debug.tick(dtReal);
     if (this.mode === 'harbor' && this.harbor) {
-      this.harbor.update(dtReal, this.stage.renderer);
+      this.harbor.update(dtReal, this.stage.renderer, (s, c, look) => this.stage.renderView(s, c, look, { focusY: 0.52, focusHalf: 0.26 }));
       return;
     }
     if (this.mode === 'galley' && this.galley) {
-      this.galley.update(dtReal, this.stage.renderer);
+      this.galley.update(dtReal, this.stage.renderer, (s, c, look) => this.stage.renderView(s, c, look, { focusY: 0.45, focusHalf: 0.26 }));
       return;
     }
     this.feedback.update(dtReal);
@@ -543,7 +539,8 @@ export class Game {
     if (this.rig.mode === 'fp' && this.stage.isPhone && this.stage.portrait) this.rig.setMode('overhead');
     this.stage.fpMode = this.rig.blend;
     this.stage.seaMesh.update(this.sea, this.renderTime, this.boatRenderPos, _m, this.boat.speed);
-    this.stage.setWeatherLook(this.weather.storm, this.boatRenderPos);
+    this.stage.setWeatherLook(this.weather.storm, this.boatRenderPos, this.rig.overheadYaw, this.boatRenderQuat);
+    this.stage.focusPoints = this.crew.overboard().map((c) => c.wp); // keep swimmers out of the tilt-shift blur
     this.snow.update(this.renderTime, this.stage.camera.position, this.weather.windDir, this.weather.wind, this.weather.snow, window.innerHeight * this.stage.renderer.getPixelRatio(), this.rig.blend);
     this.spray.setPixelScale(window.innerHeight * this.stage.renderer.getPixelRatio());
 

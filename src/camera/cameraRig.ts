@@ -43,6 +43,8 @@ export class CameraRig {
   zoom = 0.3;
   private target = new THREE.Vector3();
   private yaw = 0;
+  private pitch = 0;
+  private pitchInit = false;
   private initialised = false;
   shake = 0;
   private shakeSeed = 0;
@@ -114,7 +116,16 @@ export class CameraRig {
     let dist = lerp(oh.distanceFar, oh.distanceNear, this.zoom);
     if (i.portrait) dist *= 1.35;
     dist *= 1 - this.pushIn * 0.35;
-    const pitch = oh.pitchDeg * DEG;
+    // a low three-quarter "diorama" angle zoomed out, steepening as you zoom in (and in portrait)
+    // so the near bulwark never hides the working deck
+    const farPitch = i.portrait ? oh.portraitPitchDeg : oh.pitchDeg;
+    const pitchTarget = lerp(farPitch, Math.max(farPitch, oh.pitchNearDeg), easeInOut(clamp(this.zoom, 0, 1))) * DEG;
+    if (!this.pitchInit) {
+      this.pitch = pitchTarget;
+      this.pitchInit = true;
+    }
+    this.pitch = damp(this.pitch, pitchTarget, 4, dt);
+    const pitch = this.pitch;
     // view direction (horizontal) = (sin yaw, 0, cos yaw)
     const vx = Math.sin(this.yaw),
       vz = Math.cos(this.yaw);

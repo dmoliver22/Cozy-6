@@ -8,8 +8,11 @@ import { config } from '../config';
 import { makeCrew, CREW_LOOKS, type CrewView } from '../art/crew';
 import { makeCat } from '../art/cat';
 import { makeShipBell, makeBoot } from '../art/items';
-import { toon, toonUnique, box, cyl, canvasTexture } from '../art/materials';
+import { toon, toonUnique, box, cyl, canvasTexture, wood } from '../art/materials';
 import { Snow } from '../weather/snow';
+import { galleyLook, type Look } from '../render/look';
+import { SkyEnv, makeSkyUniforms, skyFromLook } from '../render/sky';
+import { gradientTex } from '../render/textures';
 import { renderPostcard } from '../photo/photos';
 import { dataUrlToBlob, platformDownloads } from '../core/platform';
 import type { PhotoRecord, SaveData } from '../core/save';
@@ -60,6 +63,10 @@ function seat(v: CrewView, x: number, z: number, yaw: number, scene: THREE.Scene
 export class Galley {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
+  /** lamplight interior (src/render/look.ts); the stage grades the frame with it */
+  readonly look: Look = galleyLook();
+  private env: SkyEnv | null = null;
+  private envSky = makeSkyUniforms();
   readonly ui: HTMLDivElement;
   private t = 0;
   private stoveLight: THREE.PointLight;
@@ -83,27 +90,21 @@ export class Galley {
   ) {
     this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 60);
     const sc = this.scene;
+    const look = this.look;
     sc.background = new THREE.Color(0x2a1d16);
-    sc.add(new THREE.HemisphereLight(0xffd8a8, 0x3a2418, 0.6));
-    // room
-    const planks = canvasTexture(256, 256, (g) => {
-      g.fillStyle = '#8a5f3c';
-      g.fillRect(0, 0, 256, 256);
-      for (let i = 0; i < 8; i++) {
-        g.fillStyle = i % 2 ? '#93653f' : '#7e5535';
-        g.fillRect(0, i * 32, 256, 30);
-        g.fillStyle = 'rgba(40,20,10,.4)';
-        g.fillRect(0, i * 32 + 30, 256, 2);
-      }
-    });
-    planks.wrapS = planks.wrapT = THREE.RepeatWrapping;
-    planks.repeat.set(2, 2);
-    const wallMat = new THREE.MeshToonMaterial({ color: 0xffffff, map: planks });
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), toon(0x6b4630));
+    // warm lamplight interior: a low warm fill, the lantern and stove do the rest
+    sc.add(new THREE.HemisphereLight(look.hemiSky, look.hemiGround, look.hemiIntensity));
+    // the "sky" here is the room itself, only for reflections: dark timber, amber lamplight
+    skyFromLook(this.envSky, look, 0, { clouds: 0, ground: new THREE.Color(0x2a1a12) });
+    // room: tongue-and-groove planking (box-projected, so the planks keep their size)
+    const wallMat = wood(0xb98a62, { plankWidth: 0.16, along: 'x', weathered: true, rough: 0.7 });
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), wood(0x8a5f40, { plankWidth: 0.2, along: 'x', weathered: true, rough: 0.6 }));
     floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
     sc.add(floor);
     const back = new THREE.Mesh(new THREE.PlaneGeometry(8, 3.2), wallMat);
     back.position.set(0, 1.6, -2.5);
+    back.receiveShadow = true;
     sc.add(back);
     const left = new THREE.Mesh(new THREE.PlaneGeometry(6, 3.2), wallMat);
     left.position.set(-3, 1.6, 0);
@@ -113,8 +114,16 @@ export class Galley {
     right.position.set(3, 1.6, 0);
     right.rotation.y = -Math.PI / 2;
     sc.add(right);
-    // window with snow outside
-    const win = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1.0), new THREE.MeshBasicMaterial({ color: 0x1d2a4a }));
+    // window with snow outside: the last of the dusk over the harbour
+    const dusk = gradientTex([
+      [0, '#24325e'],
+      [0.55, '#4a4f86'],
+      [0.82, '#c98a7a'],
+      [1, '#e8a878'],
+    ]);
+    const winMat = new THREE.MeshBasicMaterial({ map: dusk });
+    winMat.color.setScalar(1.25); // a touch above white so it glows in the bloom
+    const win = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1.0), winMat);
     win.position.set(0.6, 1.7, -2.49);
     sc.add(win);
     const frame = toon(0x5a3a26);
@@ -130,10 +139,26 @@ export class Galley {
     this.stoveLight = new THREE.PointLight(P.amber, 6, 7, 1.4);
     this.stoveLight.position.set(-2.2, 0.8, -1.3);
     sc.add(this.stoveLight);
-    // lantern over the table
-    this.lantern = new THREE.PointLight(0xffd09a, 7, 8, 1.5);
+    // lantern over the table: a point light for the room and a soft spot that pools light on the
+    // table and casts the crew's shadows (when the tier has shadows)
+    this.lantern = new THREE.PointLight(0xffd09a, 4.5, 8, 1.5);
     this.lantern.position.set(0, 2.4, 0);
     sc.add(this.lantern);
+    const pool = new THREE.SpotLight(0xffc98a, 6, 7, 1.05, 0.9, 1.4);
+    pool.position.set(0, 2.38, 0);
+    pool.target.position.set(0, 0, 0);
+    pool.castShadow = true;
+    pool.shadow.mapSize.set(1024, 1024);
+    pool.shadow.bias = -0.0006;
+    pool.shadow.normalBias = 0.02;
+    pool.shadow.radius = 4;
+    pool.shadow.intensity = 0.7;
+    sc.add(pool, pool.target);
+    // cool dusk light through the window
+    const winLight = new THREE.DirectionalLight(0x8fa8e0, 0.45);
+    winLight.position.set(0.6, 2.6, -6);
+    winLight.target.position.set(0, 0.8, 0.5);
+    sc.add(winLight, winLight.target);
     sc.add(box(0.2, 0.28, 0.2, toonUnique(0xffe2a6, { emissive: 0xffb860 }), 0, 2.45, 0));
     // table & bench
     sc.add(box(1.8, 0.08, 1.1, toon(P.wood), 0, 0.78, 0));
@@ -233,11 +258,11 @@ export class Galley {
     const loader = new THREE.TextureLoader();
     this.photos.slice(0, 6).forEach((ph, i) => {
       const g = new THREE.Group();
-      const frame = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.55), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      const frame = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.55), new THREE.MeshStandardMaterial({ color: 0xf4efe6, roughness: 0.6 }));
       g.add(frame);
       const tex = loader.load(ph.img);
       tex.colorSpace = THREE.SRGBColorSpace;
-      const pic = new THREE.Mesh(new THREE.PlaneGeometry(0.44, 0.33), new THREE.MeshBasicMaterial({ map: tex }));
+      const pic = new THREE.Mesh(new THREE.PlaneGeometry(0.44, 0.33), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.35 }));
       pic.position.set(0, 0.05, 0.002);
       g.add(pic);
       const cap = canvasTexture(256, 48, (c) => {
@@ -248,7 +273,7 @@ export class Galley {
         c.textAlign = 'center';
         c.fillText(ph.caption.length > 26 ? ph.caption.slice(0, 25) + '…' : ph.caption, 128, 30);
       });
-      const capM = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.085), new THREE.MeshBasicMaterial({ map: cap }));
+      const capM = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.085), new THREE.MeshStandardMaterial({ map: cap, roughness: 0.6 }));
       capM.position.set(0, -0.19, 0.002);
       g.add(capM);
       const pin = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), toon(this.save.hatColor));
@@ -422,11 +447,16 @@ export class Galley {
     });
   }
 
-  update(dt: number, renderer: THREE.WebGLRenderer): void {
+  update(dt: number, renderer: THREE.WebGLRenderer, draw?: (scene: THREE.Scene, camera: THREE.Camera, look: Look) => void): void {
     this.t += dt;
     const t = this.t;
+    if (!this.env) {
+      this.env = new SkyEnv(renderer, 256);
+      this.scene.environment = this.env.update(this.envSky);
+      this.scene.environmentIntensity = 0.6;
+    }
     this.stoveLight.intensity = 5.5 + Math.sin(t * 13) * 0.5 + Math.sin(t * 7.3) * 0.6;
-    this.lantern.intensity = 6.6 + Math.sin(t * 3.1) * 0.2;
+    this.lantern.intensity = 4.5 + Math.sin(t * 3.1) * 0.15;
     this.camera.position.x = 0.4 + Math.sin(t * 0.15) * 0.3;
     this.camera.lookAt(0, 0.95, -0.4);
     // little idle life: heads bob, someone laughs
@@ -445,7 +475,8 @@ export class Galley {
     }
     // a thin curtain of snow right at the window pane
     this.snow.update(t * 0.4, new THREE.Vector3(0.6, 1.7, -2.3), new THREE.Vector2(0.15, 0), 0.05, 0.9, window.innerHeight * renderer.getPixelRatio() * 0.12, 0, 1.1);
-    renderer.render(this.scene, this.camera);
+    if (draw) draw(this.scene, this.camera, this.look);
+    else renderer.render(this.scene, this.camera);
   }
 }
 
