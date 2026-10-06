@@ -1,5 +1,5 @@
 // Headless screenshot + probe harness (uses the globally installed Playwright + Chromium).
-// Usage: node scripts/shot.mjs <url-query> <outfile.png> [waitMs] [evalJs] [--mobile]
+// Usage: [SHOT_PORT=5173] node scripts/shot.mjs <url-query> <outfile.png> [waitMs] [evalJs] [--mobile]
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 let pw;
@@ -18,7 +18,7 @@ const page = await ctx.newPage();
 const logs = [];
 page.on('console', (m) => logs.push(`[${m.type()}] ${m.text()}`));
 page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}\n${e.stack}`));
-await page.goto(`http://localhost:5173/${query}`, { waitUntil: 'load' });
+await page.goto(`http://localhost:${process.env.SHOT_PORT || 5173}/${query}`, { waitUntil: 'load' });
 await page.waitForTimeout(Number(waitMs));
 let result = null;
 if (evalJs) {

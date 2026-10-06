@@ -1011,7 +1011,7 @@ export class PotSystem {
     const sl = art.spiritLevel;
     sl.bubble.position.x = clamp(lv / 15, -1, 1) * 0.38;
     const inWin = Math.abs(lv) <= config.fishing.levelWindowDeg;
-    ((sl.window.material as THREE.MeshToonMaterial).emissive as THREE.Color).setHex(inWin ? 0x3aff6a : 0x1d6a2a);
+    ((sl.window.material as THREE.MeshStandardMaterial).emissive as THREE.Color).setHex(inWin ? 0x3aff6a : 0x1d6a2a);
     // hauler drum spins, winch sound follows haul speed
     if (this.hauling) art.haulerDrum.rotation.x += 0.25;
     this.winch.setVolume(this.hauling ? 0.8 : 0, 0.1);

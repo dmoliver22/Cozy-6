@@ -3,6 +3,7 @@
  * displaced on the GPU with exactly the CPU wave function (SEA_GLSL ↔ Sea.displace).
  */
 import * as THREE from 'three';
+import type { Look } from '../render/look';
 import { config } from '../config';
 import { SEA_GLSL, type Sea, type SeaUniforms } from './waves';
 import { HALF_BEAM, STERN_Z, BOW_Z } from '../boat/layout';
@@ -202,6 +203,20 @@ export class SeaMesh {
     this.mesh = new THREE.Mesh(makeGrid(segments, config.sea.meshSize), this.material);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = -1;
+  }
+
+  /**
+   * Colour the sea from the art-direction look (src/render/look.ts). Stage calls this every
+   * frame with the current look; the sea shader owns how each value is used.
+   */
+  applyLook(look: Look): void {
+    const u = this.uniforms;
+    (u.uDeep.value as THREE.Color).copy(look.sea.deep);
+    (u.uShallow.value as THREE.Color).copy(look.sea.mid);
+    (u.uFoam.value as THREE.Color).copy(look.sea.foam);
+    (u.uSky.value as THREE.Color).copy(look.skyHorizon).lerp(look.skyZenith, 0.35);
+    (u.uSunDir.value as THREE.Vector3).copy(look.sunDir);
+    (u.uSun as { value: number }).value = look.sea.glitter;
   }
 
   setSegments(segments: number): void {

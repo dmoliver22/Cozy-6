@@ -660,7 +660,7 @@ export class Game {
     }
     for (const mesh of this.boatArt.cutaway) {
       const mat = mesh.material as THREE.Material;
-      if (!this.boatArt.cutawayMats.includes(mat as THREE.MeshToonMaterial)) mesh.visible = o > 0.6;
+      if (!this.boatArt.cutawayMats.includes(mat as THREE.MeshStandardMaterial)) mesh.visible = o > 0.6;
       mesh.castShadow = o > 0.95;
     }
   }

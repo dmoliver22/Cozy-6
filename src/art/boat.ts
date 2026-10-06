@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { config } from '../config';
 import { HOUSE, L, STERN_Z, BOW_Z, hullHalfWidth, railHeight, BULWARK_T } from '../boat/layout';
-import { toon, toonUnique, box, cyl, canvasTexture, hex, torus } from './materials';
+import { toon, toonUnique, paint, box, cyl, canvasTexture, hex, torus } from './materials';
 
 const P = config.palette;
 
@@ -13,7 +13,7 @@ export interface BoatArt {
   root: THREE.Group;
   /** Parts that fade for the dollhouse cutaway. */
   cutaway: THREE.Mesh[];
-  cutawayMats: THREE.MeshToonMaterial[];
+  cutawayMats: THREE.MeshStandardMaterial[];
   cradle: THREE.Group; // tilts to launch/tip
   launcherLever: THREE.Object3D;
   haulerLever: THREE.Object3D;
@@ -23,7 +23,7 @@ export interface BoatArt {
   craneBoom: THREE.Group;
   craneHook: THREE.Object3D;
   stoveGlow: THREE.PointLight | null;
-  windowMat: THREE.MeshToonMaterial;
+  windowMat: THREE.MeshStandardMaterial;
   spiritLevel: { group: THREE.Group; bubble: THREE.Mesh; window: THREE.Mesh };
   hatchLid: THREE.Object3D;
 }
@@ -117,7 +117,7 @@ export function makeBoat(): BoatArt {
   // --- hull
   const hullMat = toon(P.hull);
   const hull = new THREE.Mesh(hullGeometry(), hullMat);
-  hull.material = new THREE.MeshToonMaterial({ color: P.hull, gradientMap: (hullMat as THREE.MeshToonMaterial).gradientMap, side: THREE.DoubleSide });
+  hull.material = paint(P.hull, { side: THREE.DoubleSide });
   hull.castShadow = true;
   root.add(hull);
   // boot stripe (waterline) and name band
@@ -177,7 +177,7 @@ export function makeBoat(): BoatArt {
   root.add(namePlate);
 
   // --- deck
-  const deckMat = new THREE.MeshToonMaterial({ color: 0xffffff, map: plankTexture() });
+  const deckMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: plankTexture(), roughness: 0.8 });
   const deck = new THREE.Mesh(deckGeometry(), deckMat);
   deck.position.y = 0.001;
   deck.receiveShadow = true;
@@ -194,7 +194,7 @@ export function makeBoat(): BoatArt {
 
   // --- wheelhouse (dollhouse: roof + upper walls fade)
   const cutaway: THREE.Mesh[] = [];
-  const cutawayMats: THREE.MeshToonMaterial[] = [];
+  const cutawayMats: THREE.MeshStandardMaterial[] = [];
   const wallMat = toonUnique(P.cream, { transparent: true });
   const upperMat = toonUnique(P.cream, { transparent: true });
   const roofMat = toonUnique(P.roof, { transparent: true });
