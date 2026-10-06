@@ -1,7 +1,10 @@
 /**
  * Small props: bucket, bait jar, mallet, life ring, grapple, buoys, line coil, specials, ice shards.
  * Each factory returns a Group centred on its physics body's centre. Glossy toy plastic, brass,
- * steel, rope and glass; every prop's static meshes are merged per material.
+ * steel, rope and glass; every prop's static meshes are merged per material. Handled-toy wear (a
+ * grubby bucket lip and dark inside, a worn life ring) is baked into vertex colours on meshes
+ * kept out of the merge; painted details (bait-jar lid, buoy numbers and scuffs) are canvas decals
+ * sharing their prop's material. Everything is shaped to read from the overhead camera.
  */
 import * as THREE from 'three';
 import { config } from '../config';
@@ -58,6 +61,15 @@ function tube(pts: V3[], r: number, taper = 1, seg = 16, radial = 6, closed = fa
   }
   return g;
 }
+/** A capsule from a to b. */
+function capsuleAB(a: V3, b: V3, r: number): THREE.BufferGeometry {
+  const A = new THREE.Vector3(...a),
+    B = new THREE.Vector3(...b);
+  const c = new THREE.CapsuleGeometry(r, Math.max(0.001, A.distanceTo(B)), 3, 8);
+  c.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), B.clone().sub(A).normalize()));
+  c.translate((A.x + B.x) / 2, (A.y + B.y) / 2, (A.z + B.z) / 2);
+  return c;
+}
 /** Clear glass (no transmission pass: just a glossy see-through shell). */
 function glassMat(tint: number, opacity = 0.32): THREE.MeshStandardMaterial {
   return mat(`glass${tint}_${opacity}`, () => new THREE.MeshStandardMaterial({ color: tint, roughness: 0.04, metalness: 0.1, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide }));
@@ -66,47 +78,111 @@ const done = (g: THREE.Group) => {
   mergeStatic(g);
   return g;
 };
+/**
+ * Bake a per-vertex shade (toy wear, grime, contact darkening) into a copy of a geometry. Meshes
+ * using it need a vertex-colour material and `userData.keep` (mergeStatic drops colours).
+ */
+function shadeGeo(
+  g: THREE.BufferGeometry,
+  f: (p: THREE.Vector3, n: THREE.Vector3, centroid: THREE.Vector3) => number | [number, number, number],
+): THREE.BufferGeometry {
+  const q = g.index ? g.toNonIndexed() : g.clone();
+  const pos = q.attributes.position as THREE.BufferAttribute;
+  const nor = q.attributes.normal as THREE.BufferAttribute;
+  const col = new Float32Array(pos.count * 3);
+  const p = new THREE.Vector3(),
+    n = new THREE.Vector3(),
+    m = new THREE.Vector3(),
+    t = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    p.fromBufferAttribute(pos, i);
+    n.fromBufferAttribute(nor, i);
+    // the centre of this vertex's triangle (for hard colour edges along triangle boundaries)
+    const f0 = i - (i % 3);
+    m.fromBufferAttribute(pos, f0).add(t.fromBufferAttribute(pos, f0 + 1)).add(t.fromBufferAttribute(pos, f0 + 2)).multiplyScalar(1 / 3);
+    const c = f(p, n, m);
+    if (typeof c === 'number') col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = c;
+    else col.set(c, i * 3);
+  }
+  q.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return q;
+}
+/** A glossy toy-plastic material that multiplies in the vertex colours. */
+function vcPlastic(color: number, rough = 0.32): THREE.MeshStandardMaterial {
+  return mat(`vcp${color}_${rough}`, () => new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0, vertexColors: true }));
+}
+/** Cheap hash noise for wear patterns. */
+const hash3 = (x: number, y: number, z: number) => {
+  const h = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453;
+  return h - Math.floor(h);
+};
+const keep = (m: THREE.Mesh) => {
+  m.userData.keep = true;
+  return m;
+};
 
 // ---------------------------------------------------------------------------------------------
 
 export function makeBucket(): THREE.Group {
   const g = new THREE.Group();
   const blue = plastic(0x2f86c4, { rough: 0.28 });
-  // moulded pail: outer wall with two ribs and a rolled rim, inner wall and floor (one lathe)
-  const shell = geo('bucket', () =>
-    lathe(
-      [
-        [0.0, -0.17],
-        [0.152, -0.17],
-        [0.158, -0.162],
-        [0.166, -0.08],
-        [0.173, -0.07],
-        [0.17, -0.06],
-        [0.183, 0.04],
-        [0.19, 0.05],
-        [0.187, 0.06],
-        [0.198, 0.145],
-        [0.212, 0.152],
-        [0.214, 0.168],
-        [0.2, 0.172],
-        [0.188, 0.16],
-        [0.148, -0.148],
-        [0.0, -0.148],
-      ],
-      18,
-    ),
-  );
-  put(g, shell, blue);
+  // moulded pail: outer wall with two ribs, a thick rolled lip, inner wall and floor (one lathe).
+  // The inside is shaded darker (so it reads as a vessel from above) and the lip is a bit grimy.
+  const shell = geo('bucketV', () => {
+    const outer: [number, number][] = [
+      [0.0, -0.17],
+      [0.152, -0.17],
+      [0.158, -0.162],
+      [0.17, -0.06],
+      [0.183, 0.04],
+      [0.19, 0.05],
+      [0.198, 0.13],
+    ];
+    // rolled lip: a fat half-round bead round the top
+    const lip: [number, number][] = [];
+    for (let i = 0; i <= 3; i++) {
+      const a = -Math.PI / 2 + (i / 3) * Math.PI * 1.15;
+      lip.push([0.2 + Math.cos(a) * 0.022, 0.15 + Math.sin(a) * 0.022]);
+    }
+    const inner: [number, number][] = [
+      [0.184, 0.148],
+      [0.148, -0.146],
+      [0.0, -0.15],
+    ];
+    const prof = [...outer, ...lip, ...inner];
+    const l = lathe(prof, 14);
+    // shade by profile point (lathe vertices run segment by segment through the profile)
+    const pos = l.attributes.position as THREE.BufferAttribute;
+    const col = new Float32Array(pos.count * 3);
+    const nIn = outer.length + lip.length;
+    for (let i = 0; i < pos.count; i++) {
+      const j = i % prof.length;
+      const y = prof[j][1];
+      const grime = 0.86 + 0.14 * hash3(Math.round(pos.getX(i) * 60), Math.round(y * 40), Math.round(pos.getZ(i) * 60));
+      let k = 1;
+      if (j >= nIn + 1) k = 0.2 + 0.32 * Math.max(0, (y + 0.15) / 0.3); // inside: dark at the bottom
+      else if (j >= outer.length - 1) k = 0.9 * grime; // the handled, grubby lip
+      else if (j <= 1) k = 0.62; // scuffed foot
+      col.set([k, k, k], i * 3);
+    }
+    l.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return l;
+  });
+  put(g, shell, vcPlastic(0x2f86c4, 0.28)).userData.keep = true;
   // wire bail handle with a grip, on two moulded ears
   const steel = metal(0x9aa3a8, { rough: 0.35 });
-  put(g, geo('bail', () => new THREE.TorusGeometry(0.205, 0.0075, 4, 18, Math.PI)), steel, [0, 0.155, 0], undefined, [0, 0, 0], false);
-  put(g, geo('bailGrip', () => new THREE.CylinderGeometry(0.017, 0.017, 0.11, 8)), plastic(0x23262b, { rough: 0.5 }), [0, 0.36, 0], undefined, [0, 0, Math.PI / 2]);
-  for (const s of [-1, 1]) put(g, geo('bucketEar', () => new THREE.BoxGeometry(0.03, 0.05, 0.05)), blue, [s * 0.205, 0.145, 0]);
+  put(g, geo('bail', () => new THREE.TorusGeometry(0.21, 0.0075, 3, 10, Math.PI)), steel, [0, 0.14, 0], undefined, [0, 0, 0], false);
+  put(g, geo('bailGrip', () => new THREE.CylinderGeometry(0.017, 0.017, 0.11, 6)), plastic(0x23262b, { rough: 0.5 }), [0, 0.35, 0], undefined, [0, 0, Math.PI / 2]);
+  for (const s of [-1, 1]) put(g, geo('bucketEar', () => new THREE.BoxGeometry(0.03, 0.05, 0.05)), blue, [s * 0.212, 0.13, 0]);
   return done(g);
 }
 
+/**
+ * The bait jar's paper: the label band (top half of the canvas) and the painted lid top (a red
+ * disc with a white fish, bottom-left square), so the label and lid share one material.
+ */
 function baitLabel(): THREE.Texture {
-  return canvasTexture(256, 64, (c) => {
+  return canvasTexture(256, 128, (c) => {
     c.fillStyle = '#f3e7c9';
     c.fillRect(0, 0, 256, 64);
     c.fillStyle = '#c8432f';
@@ -128,6 +204,30 @@ function baitLabel(): THREE.Texture {
       c.textBaseline = 'middle';
       c.fillText('BAIT', x + 12, 34);
     }
+    // lid top: glossy red with a fat white fish (reads straight down from the overhead camera)
+    c.fillStyle = '#d23b2b';
+    c.fillRect(0, 64, 64, 64);
+    c.fillStyle = '#b42e22';
+    c.beginPath();
+    c.arc(32, 96, 31, 0, Math.PI * 2);
+    c.lineWidth = 3;
+    c.strokeStyle = '#a3291f';
+    c.stroke();
+    c.fillStyle = '#fffaf0';
+    c.beginPath();
+    c.ellipse(28, 96, 15, 9.5, 0, 0, Math.PI * 2);
+    c.fill();
+    c.beginPath();
+    c.moveTo(39, 96);
+    c.lineTo(52, 86);
+    c.lineTo(50, 96);
+    c.lineTo(52, 106);
+    c.closePath();
+    c.fill();
+    c.fillStyle = '#d23b2b';
+    c.beginPath();
+    c.arc(20, 93.5, 2.4, 0, Math.PI * 2);
+    c.fill();
   });
 }
 
@@ -162,43 +262,86 @@ export function makeBaitJar(): THREE.Group {
     ),
   );
   put(g, jar, glassMat(0xe2f2ea, 0.3), [0, 0, 0], undefined, undefined, false);
-  // label band round the front
+  // label band round the front (top half of the label canvas) and the painted lid top
+  const paper = mat('jarLabelMat2', () => new THREE.MeshStandardMaterial({ map: baitLabel(), roughness: 0.55, metalness: 0 }));
   put(
     g,
-    geo('jarLabel', () => new THREE.CylinderGeometry(0.0935, 0.0935, 0.085, 18, 1, true)),
-    mat('jarLabelMat', () => new THREE.MeshStandardMaterial({ map: baitLabel(), roughness: 0.75, metalness: 0 })),
+    geo('jarLabel2', () => {
+      const c = new THREE.CylinderGeometry(0.0935, 0.0935, 0.085, 18, 1, true);
+      const uv = c.attributes.uv as THREE.BufferAttribute;
+      for (let i = 0; i < uv.count; i++) uv.setY(i, 0.5 + uv.getY(i) * 0.5);
+      return c;
+    }),
+    paper,
     [0, -0.03, 0],
   );
-  // red screw lid with a ridged edge
+  // a red screw lid, 15% bigger than the neck needs, with a ridged edge
   const red = metal(0xd23b2b, { rough: 0.35, metalness: 0.4 });
-  put(g, geo('lid', () => new THREE.CylinderGeometry(0.08, 0.08, 0.04, 18)), red, [0, 0.112, 0]);
-  put(g, geo('lidRim', () => new THREE.TorusGeometry(0.079, 0.008, 4, 18)), red, [0, 0.096, 0], undefined, [Math.PI / 2, 0, 0], false);
+  put(g, geo('lid2', () => new THREE.CylinderGeometry(0.092, 0.092, 0.046, 20, 1, true)), red, [0, 0.115, 0]);
+  put(g, geo('lidRim2', () => new THREE.TorusGeometry(0.091, 0.009, 4, 20)), red, [0, 0.094, 0], undefined, [Math.PI / 2, 0, 0], false);
+  put(g, geo('lidLip', () => new THREE.TorusGeometry(0.086, 0.007, 4, 20)), red, [0, 0.137, 0], undefined, [Math.PI / 2, 0, 0], false);
+  put(
+    g,
+    geo('lidTop', () => {
+      const c = new THREE.CircleGeometry(0.09, 20);
+      c.rotateX(-Math.PI / 2);
+      const uv = c.attributes.uv as THREE.BufferAttribute;
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 0.25, uv.getY(i) * 0.5);
+      return c;
+    }),
+    paper,
+    [0, 0.1385, 0],
+    undefined,
+    undefined,
+    false,
+  );
   return done(g);
 }
 
 export function makeMallet(): THREE.Group {
   const g = new THREE.Group();
   // ash handle, rubber grip, a banded wooden head
-  put(g, geo('malletHandle', () => new THREE.CylinderGeometry(0.022, 0.027, 0.66, 8)), wood(0xd8ad78, { plankWidth: 0.04, along: 'z', weathered: false }), [0, -0.04, 0]);
-  put(g, geo('malletGrip', () => new THREE.CylinderGeometry(0.031, 0.031, 0.17, 8)), rubber(0x2b2f36), [0, -0.29, 0]);
-  put(g, geo('malletKnob', () => new THREE.SphereGeometry(0.034, 8, 6)), rubber(0x2b2f36), [0, -0.38, 0]);
-  put(g, geo('malletHead', () => new THREE.CylinderGeometry(0.068, 0.068, 0.26, 14)), wood(0x9a6a44, { plankWidth: 0.05, along: 'x', weathered: true }), [0, 0.33, 0], undefined, [0, 0, Math.PI / 2]);
+  put(g, geo('malletHandle', () => new THREE.CylinderGeometry(0.022, 0.027, 0.66, 7, 1, true)), wood(0xd8ad78, { plankWidth: 0.04, along: 'z', weathered: false }), [0, -0.04, 0]);
+  put(g, geo('malletGrip', () => new THREE.CylinderGeometry(0.031, 0.031, 0.17, 7)), rubber(0x2b2f36), [0, -0.29, 0]);
+  put(g, geo('malletKnob', () => new THREE.SphereGeometry(0.034, 7, 4)), rubber(0x2b2f36), [0, -0.38, 0]);
+  put(g, geo('malletHead', () => new THREE.CylinderGeometry(0.068, 0.068, 0.2, 10, 1, true)), wood(0x9a6a44, { plankWidth: 0.05, along: 'x', weathered: true }), [0, 0.33, 0], undefined, [0, 0, Math.PI / 2]);
   const steel = metal(0x8d969b, { rough: 0.3 });
-  for (const s of [-1, 1]) put(g, geo('malletBand', () => new THREE.CylinderGeometry(0.071, 0.071, 0.024, 14)), steel, [s * 0.1, 0.33, 0], undefined, [0, 0, Math.PI / 2]);
+  for (const s of [-1, 1]) put(g, geo('malletBand', () => new THREE.CylinderGeometry(0.071, 0.071, 0.024, 10, 1, true)), steel, [s * 0.1, 0.33, 0], undefined, [0, 0, Math.PI / 2]);
+  // bright yellow painted striking faces: the mallet reads from the overhead camera
+  const yellow = plastic(0xf5c518, { rough: 0.3 });
+  for (const s of [-1, 1]) {
+    put(g, geo('malletFace', () => new THREE.CylinderGeometry(0.066, 0.07, 0.03, 10)), yellow, [s * 0.115, 0.33, 0], undefined, [0, 0, -s * (Math.PI / 2)]);
+  }
+  // and a yellow tag on a loop at the end of the grip
+  put(g, geo('malletTag', () => new THREE.BoxGeometry(0.07, 0.045, 0.008)), yellow, [0.035, -0.43, 0], undefined, [0, 0, -0.5]);
   return done(g);
 }
 
 export function makeLifeRing(): THREE.Group {
   const g = new THREE.Group();
   const holder = new THREE.Group();
-  const red = plastic(0xd8372a, { rough: 0.3 });
-  const white = plastic(0xf5f0e6, { rough: 0.3 });
   const R = 0.32,
     T = 0.085;
-  for (let i = 0; i < 4; i++) {
-    const arc = put(holder, geo('ringArc', () => new THREE.TorusGeometry(R, T, 8, 10, Math.PI / 2)), i % 2 ? white : red);
-    arc.rotation.z = (i * Math.PI) / 2;
-  }
+  // one torus, red and white quarters in the vertex colours: the white is handled and a little
+  // grubby toward the inside, the red sun-faded on top
+  const ring = geo('ringV', () =>
+    shadeGeo(new THREE.TorusGeometry(R, T, 8, 28), (p, n, c) => {
+      const red = new THREE.Color(0xd8372a),
+        white = new THREE.Color(0xf2ede2);
+      const a = Math.atan2(c.y, c.x);
+      const q = Math.floor(((a + Math.PI * 2) % (Math.PI * 2)) / (Math.PI / 2)) % 4;
+      const rr = Math.hypot(p.x, p.y);
+      const inner = Math.max(0, (R - rr) / T); // 0 outside .. 1 at the hole
+      const speck = hash3(Math.round(p.x * 50), Math.round(p.y * 50), Math.round(p.z * 50));
+      if (q % 2) {
+        const k = 1 - inner * 0.22 - (speck > 0.8 ? 0.1 : 0);
+        return [white.r * k, white.g * k, white.b * k * 0.96];
+      }
+      const fade = 1 + Math.max(0, n.z) * 0.1;
+      return [red.r * fade, red.g * fade * 1.3, red.b * fade * 1.3];
+    }),
+  );
+  keep(put(holder, ring, vcPlastic(0xffffff, 0.3)));
   // grab line: four festoons round the outside, lashed on at the colour joins
   const line = rope(0xf0dfb4);
   for (let i = 0; i < 4; i++) {
@@ -211,9 +354,9 @@ export function makeLifeRing(): THREE.Group {
       const r = R + T + 0.006 + sag * 0.035;
       pts.push([Math.cos(a) * r, Math.sin(a) * r, 0.012 * sag]);
     }
-    put(holder, geo(`festoon${i}`, () => tube(pts, 0.011, 1, 9, 4)), line, [0, 0, 0], undefined, undefined, false);
+    put(holder, geo(`festoon${i}`, () => tube(pts, 0.011, 1, 8, 3)), line, [0, 0, 0], undefined, undefined, false);
     // lashing round the tube at the join
-    const lash = put(holder, geo('lash', () => new THREE.TorusGeometry(T + 0.008, 0.012, 3, 8)), line, [Math.cos(a0) * R, Math.sin(a0) * R, 0], undefined, undefined, false);
+    const lash = put(holder, geo('lash', () => new THREE.CylinderGeometry(T + 0.012, T + 0.012, 0.022, 7, 1, true)), line, [Math.cos(a0) * R, Math.sin(a0) * R, 0], undefined, undefined, false);
     lash.rotation.set(0, Math.PI / 2, 0);
     lash.rotateOnWorldAxis(new THREE.Vector3(0, 0, 1), a0 + Math.PI / 2);
   }
@@ -226,7 +369,7 @@ export function makeGrapple(): THREE.Group {
   const g = new THREE.Group();
   const steel = metal(0x59636a, { rough: 0.48, metalness: 0.8 });
   put(g, geo('grShaft', () => new THREE.CylinderGeometry(0.024, 0.03, 0.46, 8)), steel, [0, 0.0, 0]);
-  put(g, geo('grCrown', () => new THREE.SphereGeometry(0.042, 10, 8)), steel, [0, -0.22, 0]);
+  put(g, geo('grCrown', () => new THREE.SphereGeometry(0.042, 8, 6)), steel, [0, -0.22, 0]);
   // four curved tines with barbed points
   const tine = geo('grTine', () =>
     tube(
@@ -239,8 +382,8 @@ export function makeGrapple(): THREE.Group {
       ],
       0.019,
       0.45,
-      9,
-      5,
+      8,
+      4,
     ),
   );
   const tip = geo('grTip', () => {
@@ -254,19 +397,23 @@ export function makeGrapple(): THREE.Group {
     put(g, tip, steel, [0, 0, 0], undefined, [0, (i * Math.PI) / 2, 0]);
   }
   // shackle eye with a short tail of line
-  put(g, geo('grEye', () => new THREE.TorusGeometry(0.045, 0.013, 6, 12)), steel, [0, 0.27, 0]);
-  put(g, geo('grTail', () => tube([[0, 0.31, 0], [0.04, 0.33, 0.02], [0.08, 0.3, 0.03], [0.1, 0.24, 0.02]], 0.012, 1, 10, 5)), rope(0xf0dfb4), [0, 0, 0], undefined, undefined, false);
+  put(g, geo('grEye', () => new THREE.TorusGeometry(0.045, 0.013, 4, 10)), steel, [0, 0.27, 0]);
+  put(g, geo('grTail', () => tube([[0, 0.31, 0], [0.04, 0.33, 0.02], [0.08, 0.3, 0.03], [0.1, 0.24, 0.02]], 0.012, 1, 8, 4)), rope(0xf0dfb4), [0, 0, 0], undefined, undefined, false);
   return done(g);
 }
 
 // --- buoys ---------------------------------------------------------------------------------
 
-/** Glossy orange buoy skin: a white band round the middle with the pot number painted on it. */
+/**
+ * Glossy orange buoy skin, one canvas: the top half wraps the ball (darker moulded cap, a white
+ * band with the pot number painted on the front and back, scuffed grubby bottom); the
+ * bottom-left square is the top-cap decal with the number again, so it reads straight down.
+ */
 function buoyMat(n: number | undefined): THREE.MeshStandardMaterial {
-  return mat(`buoy${n ?? '-'}`, () => {
-    const map = canvasTexture(256, 128, (c) => {
+  return mat(`buoy2${n ?? '-'}`, () => {
+    const map = canvasTexture(256, 256, (c) => {
       c.fillStyle = '#ef7a2a';
-      c.fillRect(0, 0, 256, 128);
+      c.fillRect(0, 0, 256, 256);
       // moulding seams and a darker cap
       const grd = c.createLinearGradient(0, 0, 0, 30);
       grd.addColorStop(0, '#d8641e');
@@ -274,16 +421,53 @@ function buoyMat(n: number | undefined): THREE.MeshStandardMaterial {
       c.fillStyle = grd;
       c.fillRect(0, 0, 256, 30);
       c.fillStyle = '#fbf6ec';
-      c.fillRect(0, 50, 256, 28);
+      c.fillRect(0, 48, 256, 32);
       c.fillStyle = 'rgba(0,0,0,0.18)';
-      c.fillRect(0, 49, 256, 1.5);
-      c.fillRect(0, 77.5, 256, 1.5);
+      c.fillRect(0, 47, 256, 1.5);
+      c.fillRect(0, 79.5, 256, 1.5);
+      // a scuffed, grubby bottom where it drags on the deck and the pot
+      let seed = 7;
+      const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+      const low = c.createLinearGradient(0, 100, 0, 128);
+      low.addColorStop(0, 'rgba(70,40,20,0)');
+      low.addColorStop(1, 'rgba(70,40,20,0.4)');
+      c.fillStyle = low;
+      c.fillRect(0, 96, 256, 32);
+      // fine scratches only right at the bottom, where it sits and drags
+      for (let i = 0; i < 40; i++) {
+        const x = rnd() * 256,
+          y = 108 + rnd() * 20;
+        c.strokeStyle = rnd() < 0.6 ? `rgba(70,40,22,${0.1 + rnd() * 0.15})` : `rgba(255,235,210,${0.1 + rnd() * 0.15})`;
+        c.lineWidth = 0.5 + rnd() * 0.8;
+        c.beginPath();
+        c.moveTo(x, y);
+        c.lineTo(x + (rnd() - 0.5) * 14, y + (rnd() - 0.5) * 2);
+        c.stroke();
+      }
       if (n !== undefined) {
         c.fillStyle = '#23262b';
-        c.font = 'bold 26px Georgia, serif';
+        c.font = 'bold 30px Georgia, serif';
         c.textAlign = 'center';
         c.textBaseline = 'middle';
-        for (const x of [0, 64, 128, 192, 256]) c.fillText(String(n), x, 65);
+        // front and back only (0 and 180 degrees): never split across the wrap seam
+        for (const x of [64, 192]) c.fillText(String(n), x, 65);
+      }
+      // the top-cap decal (bottom-left square): a white roundel with the number
+      c.fillStyle = '#d8641e';
+      c.fillRect(0, 128, 128, 128);
+      if (n !== undefined) {
+        c.fillStyle = '#fbf6ec';
+        c.beginPath();
+        c.arc(64, 192, 50, 0, Math.PI * 2);
+        c.fill();
+        c.strokeStyle = 'rgba(0,0,0,0.2)';
+        c.lineWidth = 3;
+        c.stroke();
+        c.fillStyle = '#23262b';
+        c.font = 'bold 70px Georgia, serif';
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        c.fillText(String(n), 64, 197);
       }
     });
     return new THREE.MeshStandardMaterial({ map, roughness: 0.24, metalness: 0 });
@@ -308,10 +492,40 @@ function numberTexture(n: number): THREE.CanvasTexture {
 export function makeBuoy(n?: number, big = false): THREE.Group {
   const g = new THREE.Group();
   const r = big ? 0.42 : 0.28;
-  put(g, geo(`buoyBall${r}`, () => new THREE.SphereGeometry(r, big ? 22 : 16, big ? 14 : 11)), buoyMat(n));
+  // the ball uses the top half of the buoy canvas
+  put(
+    g,
+    geo(`buoyBall2${r}`, () => {
+      const b = new THREE.SphereGeometry(r, big ? 20 : 12, big ? 13 : 8);
+      const uv = b.attributes.uv as THREE.BufferAttribute;
+      for (let i = 0; i < uv.count; i++) uv.setY(i, 0.5 + uv.getY(i) * 0.5);
+      return b;
+    }),
+    buoyMat(n),
+  );
+  if (n !== undefined) {
+    // the number again on a cap decal over the top (planar UVs into the canvas's square)
+    const capA = 0.5;
+    put(
+      g,
+      geo(`buoyCap${r}`, () => {
+        const cap = new THREE.SphereGeometry(r * 1.004, 18, 3, 0, Math.PI * 2, 0, capA);
+        const pos = cap.attributes.position as THREE.BufferAttribute;
+        const uv = cap.attributes.uv as THREE.BufferAttribute;
+        const cr = r * 1.004 * Math.sin(capA);
+        for (let i = 0; i < uv.count; i++) uv.setXY(i, (0.5 + pos.getX(i) / (2 * cr)) * 0.5, (0.5 - pos.getZ(i) / (2 * cr)) * 0.5);
+        return cap;
+      }),
+      buoyMat(n),
+      [0, 0, 0],
+      undefined,
+      undefined,
+      false,
+    );
+  }
   // rope eye on top
   const line = rope(0xf0dfb4);
-  put(g, geo(`buoyEye${r}`, () => new THREE.TorusGeometry(r * 0.16, r * 0.035, 4, 10)), line, [0, r * 1.02, 0], undefined, [0, 0.4, 0], false);
+  put(g, geo(`buoyEye${r}`, () => new THREE.TorusGeometry(r * 0.16, r * 0.035, 3, 6)), line, [0, r * 1.02, 0], undefined, [0, 0.4, 0], false);
   if (big) {
     // marker pole with a pennant
     const black = plastic(0x2b2b2b, { rough: 0.4 });
@@ -468,32 +682,200 @@ export function makeShipBell(): THREE.Group {
   return done(g);
 }
 
-/** A sea otter floating on its back (long axis along Z, belly up), clutching a clam. */
+const OTTER = { fur: 0x6f4a2f, belly: 0xa9805a, pale: 0xead9bd, dark: 0x1d1612, pad: 0x4a3122 };
+
+/**
+ * An otter head, face toward +Z in its own frame: a pale face mask with a big two-puff muzzle,
+ * a button nose, closed happy eye arcs, rosy cheeks, round ears and whiskers.
+ */
+function otterHead(parent: THREE.Object3D, p: V3, rot: V3, scale = 1): void {
+  const h = new THREE.Group();
+  h.position.set(...p);
+  h.rotation.set(...rot);
+  h.scale.setScalar(scale);
+  parent.add(h);
+  const fur = plastic(OTTER.fur, { rough: 0.6 });
+  const pale = plastic(OTTER.pale, { rough: 0.62 });
+  const dark = plastic(OTTER.dark, { rough: 0.2 });
+  put(h, geo('otHead2', () => new THREE.SphereGeometry(0.125, 18, 14)), fur);
+  put(h, geo('otMask', () => new THREE.SphereGeometry(0.112, 16, 12)), pale, [0, -0.01, 0.042], [1.06, 0.95, 0.84]);
+  for (const s of [-1, 1]) {
+    put(h, geo('otMuzzle2', () => new THREE.SphereGeometry(0.05, 12, 9)), pale, [s * 0.037, -0.047, 0.106], [1, 0.9, 1]);
+    put(h, geo('otEar2', () => new THREE.SphereGeometry(0.032, 8, 6)), fur, [s * 0.1, 0.078, -0.012], [1, 0.85, 0.6]);
+    // closed, smiling eyes: little arcs (an upside-down U)
+    put(h, geo('otEyeArc', () => new THREE.TorusGeometry(0.02, 0.0068, 5, 10, Math.PI)), dark, [s * 0.052, 0.032, 0.124], undefined, [-0.25, s * 0.38, 0], false);
+    put(h, geo('otCheek', () => new THREE.SphereGeometry(0.024, 8, 6)), plastic(0xf09a8f, { rough: 0.6 }), [s * 0.08, -0.018, 0.103], [1, 0.7, 0.45], [0, s * 0.7, 0], false);
+    for (let i = 0; i < 3; i++)
+      put(
+        h,
+        geo('otWhisker2', () => new THREE.CylinderGeometry(0.0022, 0.0015, 0.1, 3)),
+        plastic(0xf8f2e8, { rough: 0.4 }),
+        [s * 0.1, -0.044 + (i - 1) * 0.013, 0.118],
+        undefined,
+        [0, s * -0.35, s * (Math.PI / 2 + (i - 1) * 0.2)],
+        false,
+      );
+  }
+  put(h, geo('otChin', () => new THREE.SphereGeometry(0.036, 10, 8)), pale, [0, -0.085, 0.085]);
+  put(h, geo('otNose2', () => new THREE.SphereGeometry(0.026, 10, 8)), dark, [0, -0.014, 0.146], [1.4, 0.85, 0.9]);
+  put(h, geo('otMouth', () => new THREE.TorusGeometry(0.014, 0.004, 4, 8, Math.PI)), dark, [0, -0.06, 0.142], undefined, [0.3, 0, Math.PI], false);
+}
+
+/** A clam held up in two paws (a fluted scallop, hinge down). */
+function otterClam(parent: THREE.Object3D, p: V3, rot: V3): void {
+  const c = new THREE.Group();
+  c.position.set(...p);
+  c.rotation.set(...rot);
+  parent.add(c);
+  const shell = plastic(0xf4cdb8, { rough: 0.32 });
+  put(
+    c,
+    geo('clamFluted', () => {
+      const g = new THREE.SphereGeometry(0.055, 16, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+      const pos = g.attributes.position as THREE.BufferAttribute;
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i),
+          z = pos.getZ(i);
+        const a = Math.atan2(z, x);
+        const k = 1 + 0.06 * Math.cos(a * 8);
+        pos.setXYZ(i, x * k, pos.getY(i), z * k);
+      }
+      g.computeVertexNormals();
+      return g;
+    }),
+    shell,
+    [0, 0, 0],
+    [1.15, 0.42, 1],
+  );
+  put(c, geo('clamLip', () => new THREE.TorusGeometry(0.056, 0.006, 4, 16)), plastic(0xe0a990, { rough: 0.4 }), [0, 0, 0], [1.15, 1, 1], [Math.PI / 2, 0, 0], false);
+}
+
+/** A sea otter floating on its back (long axis along Z, belly up), clutching a clam. Rides on pots. */
 export function makeOtter(): THREE.Group {
   const g = new THREE.Group();
-  const fur = plastic(0x7a5236, { rough: 0.6 });
-  const belly = plastic(0xd9b892, { rough: 0.6 });
-  const dark = plastic(0x1d1612, { rough: 0.2 });
+  const fur = plastic(OTTER.fur, { rough: 0.6 });
+  const belly = plastic(OTTER.belly, { rough: 0.6 });
   put(g, geo('otBody', () => new THREE.CapsuleGeometry(0.16, 0.4, 6, 14)), fur, [0, 0, -0.02], undefined, [Math.PI / 2, 0, 0]);
   put(g, geo('otTummy', () => new THREE.SphereGeometry(0.14, 14, 10)), belly, [0, 0.115, 0.0], [0.75, 0.42, 1.5]);
-  // head: fluffy pale face, round ears, button nose, happy closed eyes
-  put(g, geo('otHead', () => new THREE.SphereGeometry(0.135, 16, 12)), fur, [0, 0.06, 0.33]);
-  put(g, geo('otFace', () => new THREE.SphereGeometry(0.11, 14, 10)), belly, [0, 0.07, 0.4], [1.05, 0.85, 0.7]);
+  // head lying back: crown toward +Z, face up and a little forward
+  otterHead(g, [0, 0.075, 0.34], [Math.PI / 2 + 0.45, Math.PI, 0]);
   for (const s of [-1, 1]) {
-    put(g, geo('otMuzzle', () => new THREE.SphereGeometry(0.04, 10, 8)), belly, [s * 0.03, 0.04, 0.47]);
-    put(g, geo('otEar', () => new THREE.SphereGeometry(0.03, 8, 6)), fur, [s * 0.1, 0.13, 0.31], [1, 1, 0.6]);
-    put(g, geo('otEye', () => new THREE.TorusGeometry(0.018, 0.0055, 4, 8, Math.PI)), dark, [s * 0.052, 0.135, 0.43], undefined, [-0.9, 0, 0], false);
     // front paws on the clam, hind feet up
-    put(g, geo('otPaw', () => new THREE.SphereGeometry(0.042, 10, 8)), fur, [s * 0.065, 0.16, 0.17], [1, 0.8, 1.1]);
-    put(g, geo('otFoot', () => new THREE.SphereGeometry(0.055, 10, 8)), fur, [s * 0.08, 0.1, -0.3], [0.9, 0.6, 1.3], [0.6, 0, 0]);
-    for (let i = 0; i < 2; i++)
-      put(g, geo('otWhisker', () => new THREE.CylinderGeometry(0.002, 0.002, 0.08, 3)), plastic(0xf5efe5, { rough: 0.4 }), [s * 0.085, 0.045 + i * 0.016, 0.47], undefined, [0, 0, s * (Math.PI / 2 + (i - 0.5) * 0.3)], false);
+    put(g, geo('otPaw', () => new THREE.SphereGeometry(0.042, 10, 8)), fur, [s * 0.062, 0.17, 0.17], [1, 0.8, 1.1]);
+    put(g, geo('otFoot', () => new THREE.SphereGeometry(0.055, 10, 8)), plastic(OTTER.pad, { rough: 0.55 }), [s * 0.08, 0.1, -0.3], [0.9, 0.6, 1.3], [0.6, 0, 0]);
   }
-  put(g, geo('otNose', () => new THREE.SphereGeometry(0.022, 8, 6)), dark, [0, 0.07, 0.5], [1.3, 0.8, 0.9]);
-  // the clam
-  put(g, geo('clam', () => new THREE.SphereGeometry(0.05, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2)), plastic(0xf2c9b8, { rough: 0.35 }), [0, 0.17, 0.2], [1.2, 0.45, 1]);
+  otterClam(g, [0, 0.175, 0.2], [0, 0, 0]);
   // tail
   put(g, geo('otTail', () => new THREE.ConeGeometry(0.08, 0.32, 10)), fur, [0, 0.0, -0.42], [1, 0.55, 1], [-Math.PI / 2, 0, 0]);
+  return done(g);
+}
+
+/** A flattened tube (a paddle tail) along a curve: width in the horizontal, thickness vertical. */
+function paddle(pts: V3[], w0: number, w1: number, thick: number, seg = 14, radial = 8): THREE.BufferGeometry {
+  const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(...p)));
+  const pos: number[] = [];
+  const idx: number[] = [];
+  const up = new THREE.Vector3(0, 1, 0);
+  const T = new THREE.Vector3(),
+    S = new THREE.Vector3(),
+    c = new THREE.Vector3();
+  for (let i = 0; i <= seg; i++) {
+    const t = i / seg;
+    curve.getPointAt(t, c);
+    curve.getTangentAt(t, T);
+    S.crossVectors(T, up).normalize();
+    // round the tip off
+    const w = (w0 + (w1 - w0) * t) * (t > 0.85 ? Math.sqrt(Math.max(0.05, 1 - ((t - 0.85) / 0.15) ** 2)) : 1);
+    for (let j = 0; j < radial; j++) {
+      const a = (j / radial) * Math.PI * 2;
+      pos.push(c.x + S.x * Math.cos(a) * w, c.y + Math.sin(a) * thick, c.z + S.z * Math.cos(a) * w);
+    }
+  }
+  for (let i = 0; i < seg; i++)
+    for (let j = 0; j < radial; j++) {
+      const a = i * radial + j,
+        b = i * radial + ((j + 1) % radial),
+        d = (i + 1) * radial + j,
+        e = (i + 1) * radial + ((j + 1) % radial);
+      idx.push(a, d, b, b, d, e);
+    }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array((pos.length / 3) * 2), 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * The loose otter special: sitting up on its tail inside the upright 0.82 m capsule (origin = its
+ * centre), belly and pale face toward +Z with the face tipped up toward the overhead camera,
+ * both front paws holding a clam at the chest, big hind feet splayed forward and a flat paddle
+ * tail curled round the base.
+ */
+export function makeSittingOtter(): THREE.Group {
+  const g = new THREE.Group();
+  const fur = plastic(OTTER.fur, { rough: 0.6 });
+  const belly = plastic(OTTER.belly, { rough: 0.6 });
+  const pad = plastic(OTTER.pad, { rough: 0.55 });
+  // a pear-shaped body: broad seat, narrowing to the shoulders
+  put(
+    g,
+    geo('otSitBody', () =>
+      lathe(
+        [
+          [0.0, -0.4],
+          [0.1, -0.395],
+          [0.145, -0.37],
+          [0.162, -0.31],
+          [0.16, -0.22],
+          [0.148, -0.1],
+          [0.13, 0.0],
+          [0.112, 0.08],
+          [0.1, 0.14],
+          [0.0, 0.2],
+        ],
+        24,
+      ),
+    ),
+    fur,
+    [0, 0, 0],
+    [1, 1, 0.92],
+  );
+  // a paler tummy on the front
+  put(g, geo('otSitTummy', () => new THREE.SphereGeometry(0.13, 20, 16)), belly, [0, -0.17, 0.07], [0.9, 1.42, 0.66]);
+  otterHead(g, [0, 0.262, 0.03], [-0.32, 0, 0], 1.12);
+  // arms from the shoulders to the paws, holding a clam at the chest
+  for (const s of [-1, 1]) {
+    put(g, geo(`otArm${s}`, () => capsuleAB([s * 0.1, 0.08, 0.03], [s * 0.05, 0.018, 0.15], 0.038)), fur);
+    put(g, geo('otSitPaw', () => new THREE.SphereGeometry(0.04, 10, 8)), fur, [s * 0.052, 0.01, 0.158], [1.05, 0.9, 1]);
+  }
+  otterClam(g, [0, 0.022, 0.178], [Math.PI / 2 - 0.25, 0, 0]);
+  // big webbed hind feet splayed forward at the base
+  for (const s of [-1, 1]) {
+    put(g, geo('otSitFoot', () => new THREE.SphereGeometry(0.06, 12, 8)), pad, [s * 0.105, -0.385, 0.135], [0.95, 0.32, 1.5], [0, s * 0.45, 0]);
+    for (let k = -1; k <= 1; k++)
+      put(g, geo('otToe', () => new THREE.SphereGeometry(0.02, 6, 4)), pad, [s * 0.105 + Math.sin(s * 0.45) * 0.085 + k * 0.024, -0.38, 0.135 + Math.cos(0.45) * 0.085], [1, 0.75, 1.2], undefined, false);
+  }
+  // a flat paddle tail curling round the base from behind to the right foot
+  put(
+    g,
+    geo('otSitTail', () =>
+      paddle(
+        [
+          [0.0, -0.33, -0.12],
+          [-0.09, -0.375, -0.15],
+          [-0.17, -0.39, -0.06],
+          [-0.18, -0.392, 0.05],
+          [-0.13, -0.392, 0.13],
+        ],
+        0.058,
+        0.04,
+        0.022,
+      ),
+    ),
+    fur,
+  );
   return done(g);
 }
 
@@ -571,15 +953,9 @@ export function makeSpecial(kind: SpecialKind): THREE.Group {
       return makeBoot();
     case 'bell':
       return makeShipBell();
-    case 'otter': {
-      // the loose otter's physics body is an upright capsule: stand the model along its axis
-      const g = new THREE.Group();
-      const o = makeOtter();
-      o.rotation.x = -Math.PI / 2;
-      o.position.set(0, 0.02, 0);
-      g.add(o);
-      return g;
-    }
+    case 'otter':
+      // the loose otter's physics body is an upright capsule: it sits up on its tail
+      return makeSittingOtter();
     case 'jelly':
       return makeJelly();
   }

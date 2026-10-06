@@ -1,8 +1,8 @@
 /**
  * Crab art. Instanced in-game: one geometry per sex (shell + legs + claws, tinted per instance by
- * species) plus a cream "apron" marker geometry. The sorting rule is visual:
- *   KEEP  = wide body + narrow V-shaped flap (male, big)
- *   THROW = rounder body + broad round flap (female) or a small crab.
+ * species) plus an "apron" marker geometry on top of the shell. The sorting rule is visual:
+ *   KEEP  = wide body + a bold cream chevron (male, big)
+ *   THROW = rounder body + a big round cool-white disc (female) or a small crab.
  *
  * The body geometry carries a vertex colour that multiplies the species colour: a knobbly glossy
  * shell with darker spots, a paler underside, banded legs, black-tipped claws and black eyes.
@@ -62,35 +62,43 @@ function cone(r: number, len: number, at: THREE.Vector3, dir: THREE.Vector3, sid
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
+const R = 0.11;
+const H = 0.43;
+const shellScale = (sex: CrabSex) => (sex === 'm' ? { sx: 1.25, sz: 0.85 } : { sx: 1.02, sz: 0.93 });
+const shellCache = new Map<CrabSex, THREE.BufferGeometry>();
+/** The carapace: a flattened dome, broad in front, with knobbly tubercles and a gentle ridge. */
+function shellGeometry(sex: CrabSex): THREE.BufferGeometry {
+  const hit = shellCache.get(sex);
+  if (hit) return hit;
+  const { sx, sz } = shellScale(sex);
+  const shell = new THREE.SphereGeometry(R, 22, 11);
+  const pos = shell.attributes.position as THREE.BufferAttribute;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    const top = Math.max(0, v.y / R);
+    // a broad front edge, narrower behind
+    const zf = v.z / R;
+    const widen = 1 + 0.08 * Math.max(0, zf) - 0.06 * Math.max(0, -zf);
+    // knobbles on the upper shell
+    const bump = 1 + 0.07 * top * Math.max(0, Math.sin(v.x * 70) * Math.sin(v.z * 64 + 0.6));
+    v.set(v.x * sx * widen, v.y * H * bump, v.z * sz);
+    // a gentle ridge across the middle
+    v.y += top * 0.008 * Math.cos(zf * 1.6);
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+  shell.computeVertexNormals();
+  shellCache.set(sex, shell);
+  return shell;
+}
+
 /** Body geometry (width along X, claws toward +Z). Origin = body centre. ~0.45 m leg span for a big male. */
 export function crabBodyGeometry(sex: CrabSex): THREE.BufferGeometry {
   const male = sex === 'm';
-  const sx = male ? 1.25 : 1.02;
-  const sz = male ? 0.85 : 0.93;
-  const R = 0.11;
-  const H = 0.43;
+  const { sx, sz } = shellScale(sex);
   const parts: THREE.BufferGeometry[] = [];
+  const shell = shellGeometry(sex).clone();
 
-  // carapace: a flattened dome with knobbly tubercles and darker spots
-  const shell = new THREE.SphereGeometry(R, 22, 11);
-  {
-    const pos = shell.attributes.position as THREE.BufferAttribute;
-    const v = new THREE.Vector3();
-    for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos, i);
-      const top = Math.max(0, v.y / R);
-      // a broad front edge, narrower behind
-      const zf = v.z / R;
-      const widen = 1 + 0.08 * Math.max(0, zf) - 0.06 * Math.max(0, -zf);
-      // knobbles on the upper shell
-      const bump = 1 + 0.07 * top * Math.max(0, Math.sin(v.x * 70) * Math.sin(v.z * 64 + 0.6));
-      v.set(v.x * sx * widen, v.y * H * bump, v.z * sz);
-      // a gentle ridge across the middle
-      v.y += top * 0.008 * Math.cos(zf * 1.6);
-      pos.setXYZ(i, v.x, v.y, v.z);
-    }
-    shell.computeVertexNormals();
-  }
   // dark freckle spots in a loose ring, a pale centre
   const spots: [number, number, number][] = [];
   for (let i = 0; i < 7; i++) {
@@ -159,52 +167,149 @@ export function crabBodyGeometry(sex: CrabSex): THREE.BufferGeometry {
   return merged;
 }
 
-/** The apron marker drawn on top so it reads from the overhead camera, hugging the shell. */
+type P2 = [number, number];
+
+/** Offset a closed polygon inward by d (miter joins, clamped at sharp corners). */
+function insetPoly(poly: P2[], d: number, kernel: P2): P2[] {
+  const n = poly.length;
+  const normals: P2[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = poly[i],
+      b = poly[(i + 1) % n];
+    let nx = -(b[1] - a[1]),
+      nz = b[0] - a[0];
+    const l = Math.hypot(nx, nz) || 1;
+    nx /= l;
+    nz /= l;
+    // point the edge normal into the polygon (toward the kernel)
+    if (nx * (kernel[0] - (a[0] + b[0]) / 2) + nz * (kernel[1] - (a[1] + b[1]) / 2) < 0) {
+      nx = -nx;
+      nz = -nz;
+    }
+    normals.push([nx, nz]);
+  }
+  return poly.map((p, i) => {
+    const n0 = normals[(i + n - 1) % n],
+      n1 = normals[i];
+    let mx = n0[0] + n1[0],
+      mz = n0[1] + n1[1];
+    const ml = Math.hypot(mx, mz) || 1;
+    mx /= ml;
+    mz /= ml;
+    const k = Math.min(2.6, 1 / Math.max(0.2, mx * n1[0] + mz * n1[1]));
+    return [p[0] + mx * d * k, p[1] + mz * d * k];
+  });
+}
+
+/** Split every edge of a closed polygon so the outline can drape over the dome. */
+function densify(poly: P2[], step: number): P2[] {
+  const out: P2[] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i],
+      b = poly[(i + 1) % poly.length];
+    const k = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / step));
+    for (let j = 0; j < k; j++) out.push([a[0] + ((b[0] - a[0]) * j) / k, a[1] + ((b[1] - a[1]) * j) / k]);
+  }
+  return out;
+}
+
+/**
+ * The apron marker drawn on top so it reads from the overhead camera: a bold chevron on males
+ * (KEEP) and a big round disc on females (THROW), each with a dark 1 cm outline, cream on males
+ * and cool white on females (a second, colour-blind-safe cue). Every vertex is draped onto the
+ * actual shell mesh (ray cast) 4 mm up, and the material has a polygon offset, so the marker
+ * hugs the carapace without fins or z-fighting. Colours live in the vertex colours.
+ */
 export function crabFlapGeometry(sex: CrabSex): THREE.BufferGeometry {
   const male = sex === 'm';
-  const sx = male ? 1.25 : 1.02;
-  const sz = male ? 0.85 : 0.93;
-  // outline in xz: rows from front (+z) to back, each with a half width
-  const rows: [number, number][] = [];
+  let outline: P2[];
+  let kernel: P2;
   if (male) {
-    // narrow V, point toward the back
-    for (let i = 0; i <= 6; i++) {
-      const t = i / 6;
-      rows.push([0.055 - t * 0.115, 0.03 * (1 - t) + 0.002]);
-    }
+    // chevron (an arrowhead pointing at the tail): 10 cm across the front, 12 cm long
+    const zf = 0.058,
+      L = 0.12,
+      hw = 0.052,
+      notch = 0.022;
+    // slightly convex flanks fatten the arms of the V
+    outline = [
+      [0, zf - L],
+      [hw * 0.55 + 0.007, zf - L * 0.45 - 0.002],
+      [hw, zf],
+      [hw * 0.5, zf + 0.003],
+      [0, zf - notch],
+      [-hw * 0.5, zf + 0.003],
+      [-hw, zf],
+      [-hw * 0.55 - 0.007, zf - L * 0.45 - 0.002],
+    ];
+    kernel = [0, -0.012];
   } else {
-    // broad round flap
-    for (let i = 0; i <= 8; i++) {
-      const a = (i / 8) * Math.PI;
-      rows.push([Math.cos(a) * 0.075 - 0.005, Math.max(0.002, Math.sin(a) * 0.075)]);
+    outline = [];
+    const r = 0.075;
+    for (let i = 0; i < 20; i++) {
+      const a = (i / 20) * Math.PI * 2;
+      outline.push([Math.sin(a) * r, Math.cos(a) * r - 0.006]);
     }
+    kernel = [0, -0.006];
   }
+  const outer = densify(outline, 0.012);
+  // the inner loop: the same points pushed 1 cm in (keeps the point count, so the ring is a strip)
+  const innerAll = insetPoly(outline, 0.01, kernel);
+  const inner: P2[] = [];
+  for (let i = 0; i < outline.length; i++) {
+    const a = innerAll[i],
+      b = innerAll[(i + 1) % outline.length];
+    const oa = outline[i],
+      ob = outline[(i + 1) % outline.length];
+    const k = Math.max(1, Math.ceil(Math.hypot(ob[0] - oa[0], ob[1] - oa[1]) / 0.012));
+    for (let j = 0; j < k; j++) inner.push([a[0] + ((b[0] - a[0]) * j) / k, a[1] + ((b[1] - a[1]) * j) / k]);
+  }
+
+  // drape onto the rendered shell
+  const shellMesh = new THREE.Mesh(shellGeometry(sex), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  const ray = new THREE.Raycaster();
+  const down = new THREE.Vector3(0, -1, 0);
+  const o = new THREE.Vector3();
+  const drape = (p: P2): [number, number, number] => {
+    ray.set(o.set(p[0], 0.5, p[1]), down);
+    const hit = ray.intersectObject(shellMesh, false)[0];
+    return [p[0], (hit ? hit.point.y : 0.03) + 0.004, p[1]];
+  };
+
+  const fill = male ? [1.0, 0.9, 0.7] : [0.86, 0.94, 1.0];
+  const edge = fill.map((c) => c * 0.25);
   const verts: number[] = [];
   const cols: number[] = [];
-  // dome height of the shell at (x, z), plus a hair so the flap sits just on top
-  const shellY = (x: number, z: number) => {
-    const d = (x / (0.11 * sx)) ** 2 + (z / (0.11 * sz)) ** 2;
-    return 0.11 * 0.43 * Math.sqrt(Math.max(0, 1 - d)) + 0.012;
-  };
-  const cross = [-1, -0.7, 0, 0.7, 1];
-  const shade = [0.72, 1, 1, 1, 0.72];
-  const pt = (r: number, j: number) => {
-    const [z, w] = rows[r];
-    const x = cross[j] * w;
-    return [x, shellY(x, z), z];
-  };
-  for (let r = 0; r < rows.length - 1; r++)
-    for (let j = 0; j < cross.length - 1; j++) {
-      const a = pt(r, j),
-        b = pt(r, j + 1),
-        c = pt(r + 1, j),
-        d = pt(r + 1, j + 1);
-      const ca = shade[j],
-        cb = shade[j + 1];
-      // two triangles, wound to face up
-      verts.push(...a, ...b, ...c, ...b, ...d, ...c);
-      cols.push(ca, ca, ca, cb, cb, cb, ca, ca, ca, cb, cb, cb, cb, cb, cb, ca, ca, ca);
+  const tri = (a: P2, b: P2, c: P2, col: number[]) => {
+    // wind counter-clockwise seen from above (+y normal)
+    const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    const pts = cross < 0 ? [a, b, c] : [a, c, b];
+    for (const p of pts) {
+      verts.push(...drape(p));
+      cols.push(col[0], col[1], col[2]);
     }
+  };
+  // outline strip
+  const n = outer.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    tri(outer[i], outer[j], inner[i], edge);
+    tri(outer[j], inner[j], inner[i], edge);
+  }
+  // fill: rings shrinking toward the kernel (the shapes are star-shaped around it)
+  const rings = 3;
+  const ring = (k: number) => inner.map((p): P2 => [p[0] + (kernel[0] - p[0]) * (k / rings), p[1] + (kernel[1] - p[1]) * (k / rings)]);
+  for (let k = 0; k < rings; k++) {
+    const r0 = ring(k),
+      r1 = ring(k + 1);
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      if (k === rings - 1) tri(r0[i], r0[j], kernel, fill);
+      else {
+        tri(r0[i], r0[j], r1[i], fill);
+        tri(r0[j], r1[j], r1[i], fill);
+      }
+    }
+  }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
@@ -223,9 +328,9 @@ export const SPECIES_COLOR: Record<string, number> = {
 export function crabMaterial(color = 0xffffff): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, vertexColors: true, roughness: 0.3, metalness: 0 });
 }
-/** The cream apron marker. */
+/** The apron marker (its colours are in the vertex colours); offset so it never z-fights the shell. */
 export function crabFlapMaterial(): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({ color: 0xf6e7c8, vertexColors: true, roughness: 0.5, metalness: 0 });
+  return new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.42, metalness: 0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
 }
 
 const kindMats = new Map<string, THREE.MeshStandardMaterial>();

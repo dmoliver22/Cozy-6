@@ -4,7 +4,10 @@
  * Origin = body centre (physics box). Poses: 'sit' | 'walk' | 'slide' | 'carried' | 'loaf' | 'cling'.
  *
  * Every piece is UV-mapped into one canvas atlas (striped fur for the body, head, tail and legs,
- * plus flat swatches for eyes, nose and socks), so the whole cat is one material and seven meshes.
+ * plus flat swatches for eyes, nose and socks), so the whole cat is one material. Contact shading
+ * (under the belly and chin, where legs meet the body) is baked into vertex colours. The seated
+ * pose swaps the hind legs and tail for one extra mesh (round haunches, hind feet and a tail curled
+ * round the front paws), so it draws five meshes and the others draw seven.
  */
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -39,7 +42,7 @@ const swatchXY = (s: Swatch): [number, number] => {
 };
 
 /** Phones (which start on Low) get lighter meshes. */
-const LOD = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 0.7 : 1;
+const LOD = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 0.6 : 1;
 const segs = (k: number, min = 4) => Math.max(min, Math.round(k * LOD));
 
 const ORANGE = '#ea8a3a';
@@ -117,13 +120,17 @@ function catAtlas(): { map: THREE.Texture; rough: THREE.Texture } {
       stripe(192, y, 266, y + 16, 7.5);
       stripe(-10, y + 16, 12, y + 10, 5);
     }
-    softBlob(64, 64, 46, 110, CREAM);
-    softBlob(64, 12, 52, 26, CREAM);
+    // a white bib from the chin down the chest, narrowing along the belly
+    softBlob(64, 70, 44, 104, CREAM);
+    softBlob(64, 18, 70, 40, CREAM);
+    softBlob(64, 4, 80, 22, CREAM);
   });
   // head: u = 0.25 (x 320) is the face, top of the canvas is the crown
   clip(R_HEAD, () => {
     const fx = 256 + 64;
     softBlob(fx, 92, 40, 30, CREAM);
+    // a white chin and throat running down into the chest bib
+    softBlob(fx, 118, 66, 26, CREAM);
     // the tabby "M" on the forehead
     stripe(fx - 13, 16, fx - 9, 44, 6);
     stripe(fx, 10, fx, 48, 7);
@@ -159,11 +166,11 @@ function catAtlas(): { map: THREE.Texture; rough: THREE.Texture } {
   // flat swatches
   const sw: [Swatch, string][] = [
     ['white', '#fbf8f2'],
-    ['pink', '#ee8f9f'],
+    ['pink', '#f07f95'],
     ['green', '#9ad14a'],
     ['black', '#111214'],
     ['cream', CREAM],
-    ['ear', '#f1aab3'],
+    ['ear', '#f59aaa'],
     ['orange', ORANGE],
   ];
   for (const [s, col] of sw) {
@@ -220,7 +227,7 @@ let catMat: THREE.MeshStandardMaterial | null = null;
 function furMat(): THREE.MeshStandardMaterial {
   if (!catMat) {
     const a = catAtlas();
-    catMat = new THREE.MeshStandardMaterial({ map: a.map, roughnessMap: a.rough, roughness: 1, metalness: 0 });
+    catMat = new THREE.MeshStandardMaterial({ map: a.map, roughnessMap: a.rough, roughness: 1, metalness: 0, vertexColors: true });
   }
   return catMat;
 }
@@ -235,6 +242,8 @@ interface Piece {
   p?: [number, number, number];
   s?: [number, number, number];
   r?: [number, number, number];
+  /** baked contact shade (mesh space, after the piece transform), multiplies the fur */
+  ao?: (p: THREE.Vector3, n: THREE.Vector3) => number;
 }
 
 function atlasMerge(pieces: Piece[]): THREE.BufferGeometry {
@@ -260,6 +269,16 @@ function atlasMerge(pieces: Piece[]): THREE.BufferGeometry {
     q.setFromEuler(new THREE.Euler(...(pc.r ?? [0, 0, 0])));
     m.compose(new THREE.Vector3(...(pc.p ?? [0, 0, 0])), q, new THREE.Vector3(...(pc.s ?? [1, 1, 1])));
     g.applyMatrix4(m);
+    const pos = g.attributes.position as THREE.BufferAttribute;
+    const nor = g.attributes.normal as THREE.BufferAttribute;
+    const col = new Float32Array(pos.count * 3);
+    const pv = new THREE.Vector3(),
+      nv = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      const k = pc.ao ? pc.ao(pv.fromBufferAttribute(pos, i), nv.fromBufferAttribute(nor, i)) : 1;
+      col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = k;
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     out.push(g);
   }
   return mergeGeometries(out)!;
@@ -308,29 +327,70 @@ const LEG_XZ: [number, number][] = [
 ];
 const LEG_Y = -0.035;
 
-let geos: { body: THREE.BufferGeometry; head: THREE.BufferGeometry; tail: THREE.BufferGeometry; leg: THREE.BufferGeometry } | null = null;
+/** A tapered tube along a curve (tail), UVs along its length; capped with a ball. */
+function tailTube(curve: THREE.Curve<THREE.Vector3>, r0: number, taper: number, n: number, ao?: Piece['ao']): Piece[] {
+  const tube = new THREE.TubeGeometry(curve, segs(n), r0, segs(8), false);
+  const pos = tube.attributes.position as THREE.BufferAttribute;
+  const uv = tube.attributes.uv as THREE.BufferAttribute;
+  const c = new THREE.Vector3(),
+    v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    const t = uv.getX(i);
+    curve.getPointAt(t, c);
+    v.fromBufferAttribute(pos, i).sub(c);
+    v.multiplyScalar(1 - taper * t).add(c);
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+  tube.computeVertexNormals();
+  return [
+    { geo: tube, to: R_TAIL, ao },
+    { geo: new THREE.SphereGeometry(r0 * (1 - taper), 8, 6), to: 'orange', p: curve.getPointAt(1).toArray() as [number, number, number] },
+  ];
+}
+
+// the seated figurine (root space): body upright, front legs straight down under the chest
+const SIT = {
+  body: new THREE.Vector3(0, 0.016, -0.03),
+  bodyTilt: 0.32,
+  bodyLen: 0.62,
+  head: new THREE.Vector3(0, 0.228, 0.03),
+  frontX: 0.033,
+  frontZ: 0.062,
+  frontY: 0.004,
+  frontK: 1.35,
+};
+
+let geos: { body: THREE.BufferGeometry; head: THREE.BufferGeometry; tail: THREE.BufferGeometry; leg: THREE.BufferGeometry; sit: THREE.BufferGeometry } | null = null;
 function catGeometry() {
   if (geos) return geos;
   // body: a chubby capsule along its local y (the mesh is rotated x = PI/2, so local (x, y, z)
-  // lands at (x, -z, y) in the root and +y is the front), with a fluffy cream chest
+  // lands at (x, -z, y) in the root and +y is the front), with a fluffy cream chest. The belly is
+  // local +z: shaded darker toward the back legs.
   const body = atlasMerge([
-    { geo: new THREE.CapsuleGeometry(0.1, 0.2, segs(5), segs(14)), to: R_BODY },
-    { geo: new THREE.SphereGeometry(0.075, 10, 8), to: 'cream', p: [0, 0.155, 0.035], s: [1, 0.75, 1] },
+    {
+      geo: new THREE.CapsuleGeometry(0.1, 0.2, segs(5), segs(14)),
+      to: R_BODY,
+      ao: (p, n) => 1 - 0.24 * Math.max(0, n.z) * THREE.MathUtils.clamp(-p.y / 0.14 + 0.2, 0, 1),
+    },
+    { geo: new THREE.SphereGeometry(0.075, segs(9, 6), segs(7)), to: 'cream', p: [0, 0.155, 0.035], s: [1, 0.75, 1] },
   ]);
-  // head: big round skull, cheek puffs, chin, nose, eyes, ears, whiskers
-  const hp: Piece[] = [{ geo: new THREE.SphereGeometry(0.105, segs(18), segs(12)), to: R_HEAD, s: [1.08, 0.95, 1] }];
+  // head: big round skull, cheek puffs, chin, nose, eyes, ears, whiskers. Darker under the chin.
+  const chin: Piece['ao'] = (_p, n) => 1 - 0.25 * Math.max(0, -n.y);
+  const hp: Piece[] = [{ geo: new THREE.SphereGeometry(0.105, segs(18), segs(12)), to: R_HEAD, s: [1.08, 0.95, 1], ao: chin }];
   for (const s of [-1, 1]) {
-    hp.push({ geo: new THREE.SphereGeometry(0.042, 10, 8), to: 'cream', p: [s * 0.033, -0.035, 0.078], s: [1, 0.85, 0.9] });
+    hp.push({ geo: new THREE.SphereGeometry(0.042, segs(9, 6), segs(7)), to: 'cream', p: [s * 0.033, -0.035, 0.078], s: [1, 0.85, 0.9], ao: chin });
     // big eyes: green iris, black slit pupil, a white sparkle
-    hp.push({ geo: new THREE.SphereGeometry(0.025, 10, 8), to: 'green', p: [s * 0.043, 0.02, 0.087], s: [1, 1.15, 0.5] });
-    hp.push({ geo: new THREE.SphereGeometry(0.018, 8, 6), to: 'black', p: [s * 0.043, 0.02, 0.095], s: [0.5, 1.05, 0.45] });
-    hp.push({ geo: new THREE.SphereGeometry(0.0055, 5, 4), to: 'white', p: [s * 0.037, 0.031, 0.1] });
-    // ears: the right one is folded over
+    hp.push({ geo: new THREE.SphereGeometry(0.025, segs(9, 6), segs(7)), to: 'green', p: [s * 0.043, 0.02, 0.087], s: [1, 1.15, 0.5] });
+    hp.push({ geo: new THREE.SphereGeometry(0.018, segs(7, 5), segs(5)), to: 'black', p: [s * 0.043, 0.02, 0.095], s: [0.5, 1.05, 0.45] });
+    hp.push({ geo: new THREE.SphereGeometry(0.0055, 4, 3), to: 'white', p: [s * 0.037, 0.031, 0.1] });
+    // ears: the right one is folded over; big pink insides facing forward
     const bent = s > 0;
-    hp.push({ geo: new THREE.ConeGeometry(0.046, 0.085, 10), to: 'orange', p: [s * 0.058, 0.083, -0.01], r: [bent ? 0.75 : -0.05, 0, -s * 0.32] });
-    hp.push({ geo: new THREE.ConeGeometry(0.03, 0.06, 8), to: 'ear', p: [s * 0.058, bent ? 0.08 : 0.076, bent ? 0.008 : 0.005], r: [bent ? 0.75 : -0.05, 0, -s * 0.32] });
+    const earP: [number, number, number] = [s * 0.058, 0.083, -0.01];
+    const earR: [number, number, number] = [bent ? 0.75 : -0.05, 0, -s * 0.32];
+    hp.push({ geo: new THREE.ConeGeometry(0.046, 0.085, 10), to: 'orange', p: earP, r: earR });
+    hp.push({ geo: new THREE.ConeGeometry(0.034, 0.066, 8).scale(1, 1, 0.42).translate(0, -0.006, 0.021), to: 'ear', p: earP, r: earR });
     // whiskers
-    for (let i = 0; i < 3; i++) {
+    for (let i = LOD < 1 ? 1 : 0; i < 3; i++) {
       hp.push({
         geo: new THREE.CylinderGeometry(0.0022, 0.0012, 0.1, 3),
         to: 'white',
@@ -339,15 +399,35 @@ function catGeometry() {
       });
     }
   }
-  hp.push({ geo: new THREE.SphereGeometry(0.03, 8, 6), to: 'cream', p: [0, -0.062, 0.07], s: [1, 0.8, 0.9] });
-  hp.push({ geo: new THREE.SphereGeometry(0.016, 8, 6), to: 'pink', p: [0, -0.012, 0.107], s: [1.35, 0.85, 0.85] });
+  hp.push({ geo: new THREE.SphereGeometry(0.03, segs(7, 5), segs(5)), to: 'cream', p: [0, -0.062, 0.07], s: [1, 0.8, 0.9], ao: chin });
+  // a pink nose pad: a rounded triangle, point down
+  hp.push({ geo: new THREE.SphereGeometry(0.018, 10, 6), to: 'pink', p: [0, -0.01, 0.108], s: [1.45, 0.9, 0.8] });
+  hp.push({ geo: new THREE.ConeGeometry(0.014, 0.022, 8), to: 'pink', p: [0, -0.02, 0.106], s: [1.4, 1, 0.7], r: [Math.PI, 0, 0] });
   const head = atlasMerge(hp);
-  // leg: a stubby capsule (orange with a white sock) and a round paw
+  // leg: a stubby capsule (orange with a white sock) and a round paw, darker where it meets the body
   const leg = atlasMerge([
-    { geo: new THREE.CapsuleGeometry(0.03, 0.045, 2, 7), to: R_LEG, p: [0, -0.02, 0] },
-    { geo: new THREE.SphereGeometry(0.034, 8, 5), to: 'white', p: [0, -0.06, 0.012], s: [1, 0.7, 1.25] },
+    { geo: new THREE.CapsuleGeometry(0.03, 0.045, 2, 7), to: R_LEG, p: [0, -0.02, 0], ao: (p) => 1 - 0.2 * THREE.MathUtils.clamp((p.y + 0.005) / 0.035, 0, 1) },
+    { geo: new THREE.SphereGeometry(0.034, segs(8, 5), segs(5)), to: 'white', p: [0, -0.06, 0.012], s: [1, 0.7, 1.25] },
   ]);
-  geos = { body, head, tail: tailGeometry(), leg };
+  // the seated extras (root space, only shown in the sit pose): round haunches either side of the
+  // rump, hind feet poking forward, and the tail curled round the front paws
+  const deck = -0.11;
+  const low: Piece['ao'] = (p) => 1 - 0.3 * THREE.MathUtils.clamp(1 - (p.y - deck) / 0.06, 0, 1);
+  const sit: Piece[] = [];
+  for (const sx of [-1, 1]) {
+    sit.push({ geo: new THREE.SphereGeometry(0.066, segs(12), segs(9)), to: R_BODY, p: [sx * 0.074, -0.068, -0.07], s: [0.82, 0.88, 1.12], r: [0, sx * 0.25, 0], ao: low });
+    sit.push({ geo: new THREE.SphereGeometry(0.032, segs(8, 5), segs(5)), to: 'white', p: [sx * 0.098, -0.098, 0.03], s: [0.95, 0.6, 1.45], r: [0, sx * 0.15, 0], ao: low });
+  }
+  const curl = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0.0, -0.05, -0.13),
+    new THREE.Vector3(0.07, -0.078, -0.165),
+    new THREE.Vector3(0.155, -0.082, -0.09),
+    new THREE.Vector3(0.17, -0.082, 0.03),
+    new THREE.Vector3(0.12, -0.082, 0.13),
+    new THREE.Vector3(0.03, -0.084, 0.165),
+  ]);
+  sit.push(...tailTube(curl, 0.032, 0.32, 16, low));
+  geos = { body, head, tail: tailGeometry(), leg, sit: atlasMerge(sit) };
   return geos;
 }
 
@@ -382,6 +462,10 @@ export function makeCat(): CatView {
     root.add(leg);
     legs.push(leg);
   }
+  // haunches, hind feet and the curled tail of the seated pose (shown instead of the hind legs and tail)
+  const sitExtras = mesh(G.sit);
+  sitExtras.visible = false;
+  root.add(sitExtras);
   const hearts = new THREE.Group();
   root.add(hearts);
   // a soft contact shadow on the deck (the only one on Low, where shadow maps are off)
@@ -408,28 +492,32 @@ export function makeCat(): CatView {
     legs.forEach((l, i) => {
       l.rotation.set(0, 0, 0);
       l.position.set(LEG_XZ[i][0], LEG_Y, LEG_XZ[i][1]);
+      l.scale.set(1, 1, 1);
+      l.visible = true;
     });
+    tail.visible = true;
+    sitExtras.visible = false;
     if (p === 'walk') {
       legs.forEach((l, i) => (l.rotation.x = Math.sin(t * 9 + (i === 0 || i === 3 ? 0 : Math.PI)) * 0.6));
       body.position.y = BODY_P.y + Math.abs(Math.sin(t * 9)) * 0.008;
       tail.rotation.set(-0.9 + Math.sin(t * 3) * 0.15, Math.sin(t * 2) * 0.3, 0);
       head.rotation.y = Math.sin(t * 1.3) * 0.2;
     } else if (p === 'sit') {
-      // sitting up like a figurine: rump on the deck, front paws tucked in at the base, hind feet
-      // poking forward at the sides, tail curled round
-      body.rotation.x = Math.PI / 2 - 1.0;
-      body.scale.set(1, 0.72, 1);
-      body.position.set(0, 0.032, -0.04);
-      legs[0].position.set(-0.042, LEG_Y, 0.052);
-      legs[1].position.set(0.042, LEG_Y, 0.052);
-      legs[2].position.set(-0.088, LEG_Y + 0.02, -0.075);
-      legs[3].position.set(0.088, LEG_Y + 0.02, -0.075);
-      legs[2].rotation.x = 1.4;
-      legs[3].rotation.x = 1.4;
-      head.position.set(0, 0.245, 0.045);
-      head.rotation.x = -0.1;
-      tail.position.set(0, -0.075, -0.13);
-      tail.rotation.set(-1.5, 0.7, Math.sin(t * 1.5) * 0.25);
+      // sitting up like a figurine: a short upright body on two round haunches, front legs
+      // straight down under the chest with the white socks together, the tail curled round the
+      // front paws, head up on top
+      body.rotation.x = SIT.bodyTilt;
+      body.scale.set(1, SIT.bodyLen, 1);
+      body.position.copy(SIT.body);
+      for (const i of [0, 1]) {
+        legs[i].position.set((i ? 1 : -1) * SIT.frontX, SIT.frontY, SIT.frontZ);
+        legs[i].scale.set(1, SIT.frontK, 1);
+      }
+      legs[2].visible = legs[3].visible = false;
+      tail.visible = false;
+      sitExtras.visible = true;
+      head.position.copy(SIT.head);
+      head.rotation.set(-0.12, Math.sin(t * 0.7) * 0.12, Math.sin(t * 0.45) * 0.06);
     } else if (p === 'loaf') {
       // paws tucked under: the body settles onto the deck
       body.position.y = -0.005;
