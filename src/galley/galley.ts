@@ -304,7 +304,7 @@ export class Galley {
     this.ui.innerHTML = `
       <div class="g-top">
         <div class="g-title">Potluck in the galley</div>
-        <div class="g-sub">$${Math.round(this.appraisal.total).toLocaleString('en-US')} earned · ${this.appraisal.crabs} crab · ${this.stats.allHeld} rogue sets held · ${this.stats.overboards} swims</div>
+        <div class="g-sub">$${Math.round(this.appraisal.total).toLocaleString('en-US')} earned · ${this.appraisal.crabs} crab · ${this.stats.allHeld} rogue sets held · ${this.stats.overboards} swims${(this.stats as { score?: string }).score ?? ''}</div>
       </div>
       ${lore ? `<div class="g-lore">📜 From the bottle: <i>${lore}</i></div>` : ''}
       <div class="g-pot" data-pot><div class="g-pot-icon">🍲</div><div class="g-pot-items"></div><div class="g-pot-hint">Drag 2–3 ingredients into the pot</div></div>

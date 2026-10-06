@@ -33,7 +33,7 @@ export function appraise(tank: TankEntry[], endTime: number): Appraisal {
       continue;
     }
     const c = config.catch[e.species as 'red'];
-    const v = e.weight * (c?.pricePerKg ?? 8) * fresh;
+    const v = e.weight * (c?.pricePerKg ?? 8) * fresh * config.catch.priceScale;
     gross += v;
     const row = by.get(e.species) ?? { count: 0, kg: 0, value: 0 };
     row.count++;

@@ -60,7 +60,7 @@ export class Trip {
         <div class="decision-who">📻 Mo</div>
         <div class="decision-text">Barometer's dropping, kid… Storm's coming in. Haul the second string, or run for home?</div>
         <div class="decision-buttons">
-          <button class="btn primary" data-c="haul">⛈ Haul one more string</button>
+          <button class="btn primary" data-c="haul">⛈ Haul one more (storm scores ×1.5)</button>
           <button class="btn" data-c="home">🏠 Run for home</button>
         </div>
       </div>`;
@@ -317,7 +317,7 @@ export class Trip {
         break;
       case 'decision':
         this.objective('📻 Mo needs your call');
-        if (this.phaseT > 25) this.decide(true);
+        if (this.phaseT > 25) this.decide(true, false);
         break;
       case 'home':
         this.objective('🏠 Running for Kittiwake Harbor — sort the last of the catch!');
@@ -357,10 +357,12 @@ export class Trip {
     }
   }
 
-  decide(haul: boolean): void {
+  /** byPlayer: false when Mo's 25 s timeout made the call (only the player's own brave call earns a knot). */
+  decide(haul: boolean, byPlayer = true): void {
     if (this.phase !== 'decision') return;
     this.decisionEl.classList.remove('on');
     sfx.play('uiConfirm');
+    this.ctx.sys.score?.onDecision?.(byPlayer && haul);
     if (haul) {
       this.radio("Brave crew. Hang on to your hats — haul string two!", true);
       this.setPhase('haul2');

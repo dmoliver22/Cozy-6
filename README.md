@@ -81,7 +81,14 @@ skip to the second haul.
 5. **Weather.** Calm turns choppy turns storm. Ice builds up on the deck, so chip it with
    the mallet before everyone's skating. When the barometer drops, Mo asks: one more
    string, or run for home?
-6. **Harbor and galley.**
+6. **Good hands.** Nothing you do can lose points, but the precise version of each job earns
+   gold: let go of the pot as the bubble crosses the **gold core** of the level, brace inside the
+   **gold arc** at the end of the wave ring, sort crabs in quick succession, and hit the buoy itself
+   with the grapple. Good moments tie knots in your streak (×1.25 every three knots, up to ×2.5);
+   a missed landing, a tumble or a wrong sort unties it. Stand by the cradle and Dot leaves the
+   landing to you. The sea gets a notch livelier each trip, and every day has its own tide.
+7. **Harbor and galley.**
+   - The Deckhand's Log shows how the trip went: a rank, a row of pips per skill and one tip.
    - Sell the catch and buy upgrades or a new hat.
    - Cook a potluck for a small buff next trip.
    - Pin the trip's photos on the board and download a postcard.
@@ -103,7 +110,8 @@ The pause menu has:
 - Haptics.
 - Volume and music.
 - Invert look.
-- Reduce flashing.
+- Reduce flashing (also stills the gold pulses and the rank stamp).
+- Show scores (off keeps the words, like "DEAD LEVEL!", and hides the numbers).
 
 ## URL flags (testing)
 
@@ -112,7 +120,9 @@ The pause menu has:
 | `?autostart=1` | Skip the title / chart screen |
 | `?skipTutorial=1` | Skip the tutorial string |
 | `?weather=calm\|choppy\|storm` | Pin the weather for the whole trip (storm sets never stop) |
-| `?seed=N` | Change the RNG seed |
+| `?seed=N` | Change the RNG seed (otherwise today's date picks it) |
+| `?tier=0..4` | Force the season tier (trip 1 is 0; tier 2 is the original tuning) |
+| `?tide=0..6` | Force today's tide (`-1` for none) |
 | `?touch=1` | Force the touch UI on desktop |
 
 ## Project layout

@@ -11,6 +11,8 @@ export interface Settings {
   /** off (default): a tap or click picks a thing up and keeps holding it, the next tap puts it down.
    *  on: hold the button to carry, let go to put it down. */
   holdToCarry: boolean;
+  /** off: grade pops, the score strip and the Log keep their words but hide the numbers */
+  showScores: boolean;
 }
 
 const KEY = 'potluck.settings.v1';
@@ -25,14 +27,19 @@ export const defaultSettings: Settings = {
   invertLook: false,
   reduceFlashing: false,
   holdToCarry: false,
+  showScores: true,
 };
 
 type Listener = (s: Settings) => void;
 const listeners: Listener[] = [];
 
-/** Be told whenever settings are saved (the menu saves on every change). */
-export function onSettingsChange(fn: Listener): void {
+/** Be told whenever settings are saved (the menu saves on every change). Returns the unsubscribe. */
+export function onSettingsChange(fn: Listener): () => void {
   listeners.push(fn);
+  return () => {
+    const i = listeners.indexOf(fn);
+    if (i >= 0) listeners.splice(i, 1);
+  };
 }
 
 export function loadSettings(): Settings {

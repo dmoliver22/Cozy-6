@@ -107,6 +107,7 @@ export const config = {
     iceRollGain: 0.45, // extra roll multiplier at full ice (top-heavy)
     rogueRollKickDeg: 14, // extra scripted roll impulse when a rogue hits (in addition to the sea itself)
     landingDip: 0.03, // the deck dips 3 cm on a good pot landing
+    perfectDip: 0.05, // …and 5 cm on a PERFECT ("dead level") one
   },
 
   deck: {
@@ -168,6 +169,10 @@ export const config = {
     breakForce: 5200,
     breakForceBuff: 1.1, // "Warm bellies"
     leanDeg: 14,
+    /** bracing within this many seconds before impact grades PERFECT (the gold arc on the wave ring) */
+    perfectSec: 1.2,
+    /** bracing up to this long after impact (still on your feet) grades CLUTCH */
+    clutchSec: 0.4,
   },
 
   overboard: {
@@ -199,6 +204,8 @@ export const config = {
     stormRogueGapSec: [32, 48] as [number, number],
     choppyRogueGapSec: [70, 100] as [number, number],
     heaterIceScale: 0.35,
+    /** ice build-up multiplier (the season ramp and Frost Smoke tides raise it) */
+    iceScale: 1,
   },
 
   ice: {
@@ -224,6 +231,12 @@ export const config = {
     hangLength: 1.65,
     swingDamping: 0.12,
     levelWindowDeg: 4.5,
+    /** the gold "dead level" core inside the window */
+    levelPerfectDeg: 1.5,
+    /** the landing grade takes the levelest the deck was over this many ms before letting go (touch latency) */
+    landingGraceMs: 80,
+    /** after two missed landings in a row Mo holds her steady: the window widens this much for the next try */
+    steadyHandBonusDeg: 1.5,
     grappleRange: 14,
     grappleHookRadius: 2.4,
     aimAssistRadius: 3.5, // throws at the sea snap to a buoy / swimmer this close to the aim point
@@ -241,6 +254,38 @@ export const config = {
     golden: { name: 'Golden king crab', color: 0xf2c230, pricePerKg: 40, weight: [2.5, 4.5], weightRoll: 0.03, femaleRate: 0.0, smallRate: 0.0 },
     wrongKeepPenalty: 0.04, // fraction of sale lost per wrongly kept crab
     freshnessLossPerMin: 0.01,
+    /** fish buyer multiplier (some tides pay storm money) */
+    priceScale: 1,
+  },
+
+  /** Sorting rhythm: player sorts close together build a chain; a whole tip sorted clean is a Clean Table. */
+  sort: {
+    chainSec: 3.0,
+    chainCap: 8,
+    cleanTableSec: 30,
+    /** trips 1–2: a held crab's label says keeper / throw back */
+    hints: false,
+  },
+
+  /** Knot Streak scoring (only the player's own actions score; nothing ever takes points away). */
+  score: {
+    streakStep: 0.25,
+    streakEvery: 3,
+    streakCap: 2.5,
+    weatherMult: { calm: 1, choppy: 1.25, storm: 1.5 },
+    ranks: [0, 1500, 4000, 7500, 12000, 18000],
+    /** trip 1: only a missed landing unties the streak */
+    lenient: false,
+  },
+
+  /** Season ramp and Today's Tide (set from the save before the trip starts; see game/progress.ts). */
+  progress: {
+    /** the tier this trip is fished at (0 gentle … 4 wild); tier 2 is exactly the values above */
+    tier: 2,
+    /** today's tide flavour index, or -1 for none */
+    tide: -1,
+    /** the local date (YYYY-MM-DD) this trip is fished on, captured at boot ('' until then) */
+    dateKey: '',
   },
 
   bots: {
@@ -348,6 +393,9 @@ export const config = {
 export type Config = typeof config;
 export const DEG = deg;
 
+/** The URL flags as parsed by applyUrlOverrides (read by game/progress.ts). */
+export const urlParams: Record<string, string> = {};
+
 /** URL overrides for quick tuning/testing, e.g. ?seed=7&weather=storm&skipTutorial=1&autostart=1 */
 export function applyUrlOverrides(): Record<string, string> {
   const out: Record<string, string> = {};
@@ -355,6 +403,10 @@ export function applyUrlOverrides(): Record<string, string> {
     const p = new URLSearchParams(location.search);
     p.forEach((v, k) => (out[k] = v));
     if (out.seed) config.seed = Number(out.seed) || config.seed;
+    // ?tier=0..4 forces the season tier, ?tide=0..6 (or -1 for none) forces today's tide
+    if (out.tier !== undefined && !/^[0-4]$/.test(out.tier)) delete out.tier;
+    if (out.tide !== undefined && !/^(-1|[0-6])$/.test(out.tide)) delete out.tide;
+    for (const k of Object.keys(out)) urlParams[k] = out[k];
   } catch {
     /* no location in tests */
   }

@@ -10,6 +10,7 @@
   window.__events.on('radio', (e) => L('RADIO ' + e.text));
   window.__events.on('knockdown', (e) => L('KNOCK ' + e.crew + ' ' + e.reason));
   window.__events.on('photo', (e) => L('PHOTO ' + e.caption));
+  window.__events.on('grade', (e) => L('GRADE ' + e.moment + ' ' + e.grade + ' ' + e.label + ' +' + e.points));
   L('step ' + g.trip.tutStep);
   until(() => g.pots.cradlePot && g.pots.cradlePot.state === 'cradle', 10);
   L('cradle ready; bots status ' + g.bots.brains.map(b => b.crew.id + ':' + b.status).join(' '));

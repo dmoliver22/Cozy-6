@@ -26,6 +26,8 @@ export interface RogueSet {
   label: string;
   heldAt: Map<string, boolean>;
   crewAtImpact: string[];
+  /** seconds each crew member had been braced at impact (−1 = not braced): grades the player's brace */
+  braceAge: Map<string, number>;
 }
 
 const SIDE_TEXT: Record<RogueSide, string> = { port: 'port side', starboard: 'starboard', bow: 'dead ahead' };
@@ -67,6 +69,7 @@ export class RogueDirector {
       label: opts.label ?? 'rogue',
       heldAt: new Map(),
       crewAtImpact: [],
+      braceAge: new Map(),
     };
     this.current = set;
     this.updateDir(set);
@@ -171,6 +174,7 @@ export class RogueDirector {
       if (c.isUp && !c.insideHouse && !c.atHelm) {
         set.crewAtImpact.push(c.id);
         set.heldAt.set(c.id, c.braced);
+        set.braceAge.set(c.id, c.braced ? c.braceTime : -1);
       }
     }
     sfx.play('whump', { volume: 1, pitch: set.amp > 2 ? 0.85 : 1 });
@@ -200,15 +204,15 @@ export class RogueDirector {
     }
     const allHeld = set.crewAtImpact.length >= 2 && fallen.length === 0;
     this.history.push({ side: set.side, allHeld, fallen });
-    events.emit('rogueResolved', { allHeld, heldCount: held, fallen });
+    events.emit('rogueResolved', { allHeld, heldCount: held, fallen, tImpact: set.tImpact, braceAge: Object.fromEntries(set.braceAge), atImpact: set.crewAtImpact.slice() });
   }
 
   /** For the HUD: 0..1 fill toward impact, plus side. */
-  hudState(): { fill: number; side: RogueSide; secs: number; stage: number } | null {
+  hudState(): { fill: number; side: RogueSide; secs: number; stage: number; lead: number } | null {
     const s = this.current;
     if (!s || s.stage < 1 || s.stage >= 5) return null;
     const dtI = s.tImpact - this.ctx.time;
-    return { fill: 1 - Math.max(0, Math.min(1, dtI / s.lead)), side: s.side, secs: Math.max(0, dtI), stage: s.stage };
+    return { fill: 1 - Math.max(0, Math.min(1, dtI / s.lead)), side: s.side, secs: Math.max(0, dtI), stage: s.stage, lead: s.lead };
   }
 }
 

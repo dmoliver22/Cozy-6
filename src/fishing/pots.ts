@@ -36,6 +36,8 @@ const _v3 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const Z = new THREE.Vector3(0, 0, 1);
 const ID = new THREE.Quaternion();
+/** deck-level samples kept for the landing grace (32 steps is over 0.25 s even at 120 Hz) */
+const LEVEL_RING = 32;
 
 export const POT_DEF: ItemDef = {
   kind: 'pot',
@@ -99,6 +101,11 @@ export class Pot {
   landedAt = -10;
   /** seconds 'onLine' with no line anywhere (see PotSystem.stepPot) */
   strandT = 0;
+  /** who last had hold of it while it hung on the line (the landing is credited to them) */
+  guideBy?: string;
+  /** when the player started lining up its landing / its grapple throw (bots wait at most 6 s) */
+  dibsSince?: number;
+  grappleDibsSince?: number;
   readonly kinP = new THREE.Vector3();
   readonly kinQ = new THREE.Quaternion();
 
@@ -142,7 +149,15 @@ export class PotSystem {
   goldenGiven = false;
   specialsQueue: string[] = [];
   potsHauled = 0;
-  readonly landings: { good: boolean; deg: number }[] = [];
+  readonly landings: { good: boolean; deg: number; grade?: string; by?: string }[] = [];
+  /** |deck level| samples (a fixed ring, no per-step garbage): the landing grade forgives a late release */
+  private readonly levelT = new Float64Array(LEVEL_RING);
+  private readonly levelV = new Float32Array(LEVEL_RING);
+  private levelHead = -1;
+  private levelCount = 0;
+  /** the player's missed landings in a row (two: Mo holds her steady) */
+  steadyMisses = 0;
+  private tipSeq = 0;
   private pendingCatchLeft: { crabs: number; species: Species[] } = { crabs: 0, species: [] };
 
   constructor(private ctx: Ctx) {
@@ -458,6 +473,8 @@ export class PotSystem {
 
   private startHanging(pot: Pot): void {
     pot.state = 'hanging';
+    pot.guideBy = undefined;
+    pot.dibsSince = undefined;
     const p = pot.kinP.clone();
     const it = this.toDynamic(pot, p, ID.clone(), new THREE.Vector3(0.6, 0.6, 0));
     it.data.label = pot.otter ? 'pot (with an otter on it!)' : 'swinging pot';
@@ -482,15 +499,23 @@ export class PotSystem {
     const dx = Math.hypot(p.x - target.x, p.z - target.z);
     if (dx > 0.85 || this.cradlePot) return; // not over the cradle: keeps swinging
     const level = this.deckLevelDeg();
-    const good = Math.abs(level) <= config.fishing.levelWindowDeg;
-    this.landings.push({ good, deg: level });
+    // graded on the levelest the deck was over the last few frames before letting go (touch latency)
+    const g = this.minRecentLevel(config.fishing.landingGraceMs);
+    const good = g <= this.levelWindow();
+    const grade: 'perfect' | 'good' | 'miss' = good ? (g <= this.levelCore() ? 'perfect' : 'good') : 'miss';
+    const by = pot.guideBy;
+    this.landings.push({ good, deg: level, grade, by });
+    if (!good && by === 'player') {
+      this.steadyMisses++;
+      if (this.steadyMisses === 2) events.emit('radio', { who: 'Mo', text: "Easy, kid, I'll hold her steady." });
+    } else if (good) this.steadyMisses = 0;
     const cascadeAt = target.clone();
     if (good) {
       this.fromDynamic(pot);
       this.cradlePot = pot;
       pot.state = 'cradle';
       this.setKinematic(pot, p, ID);
-      pot.tw = { from: p.clone(), to: target, fromQ: ID.clone(), toQ: ID.clone(), t: 0, dur: 0.16, arc: 0, done: () => this.goodThunk(pot) };
+      pot.tw = { from: p.clone(), to: target, fromQ: ID.clone(), toQ: ID.clone(), t: 0, dur: 0.16, arc: 0, done: () => this.goodThunk(pot, grade, by, dx) };
       pot.state = 'craning';
     } else {
       // bad landing: the rope pays out on a tilted deck — the pot skids off the cradle
@@ -508,25 +533,35 @@ export class PotSystem {
       this.ctx.sys.spray?.cascade(cascadeAt, 20, 1.6);
       this.blockPot = null;
       haptics.buzz(60);
-      events.emit('potLanded', { good: false, levelDeg: level });
+      events.emit('potLanded', { good: false, levelDeg: level, grade, by, dx, stringNo: pot.stringNo, pot: pot.number });
     }
   }
 
-  private goodThunk(pot: Pot): void {
+  private goodThunk(pot: Pot, grade: 'perfect' | 'good' | 'miss' = 'good', by?: string, dx = 0): void {
     pot.state = 'cradle';
     this.blockPot = null;
     pot.hauled = true;
     pot.landedAt = this.ctx.time;
     pot.view.setDrip(0.4);
     const level = this.deckLevelDeg();
-    this.ctx.boat.landingDip(config.boat.landingDip);
-    sfx.play('thunk', { volume: 1 });
+    const mine = by === 'player';
+    if (mine && grade === 'perfect') {
+      // DEAD LEVEL: a deeper dip, a fatter THUNK, a little chime and a gold flash
+      this.ctx.boat.landingDip(config.boat.perfectDip);
+      sfx.play('thunk', { volume: 1, pitch: 0.85 });
+      sfx.play('chime', { pitch: 1.5, volume: 0.4, delay: 0.06 });
+      this.ctx.sys.hud?.flash('rgba(242,194,48,.45)');
+    } else {
+      this.ctx.boat.landingDip(config.boat.landingDip);
+      sfx.play('thunk', { volume: 1 });
+      this.ctx.sys.hud?.flash('rgba(88,196,106,.55)');
+    }
     sfx.play('splash', { volume: 0.5, pitch: 1.3, delay: 0.05 });
     this.ctx.sys.spray?.cascade(pot.kinP, 40, 2.0);
     haptics.buzz(config.haptics.landing);
-    this.ctx.sys.hud?.pop('THUNK! Level landing', pot.kinP.clone().setY(pot.kinP.y + 1.2), 'good', 1.4);
-    this.ctx.sys.hud?.flash('rgba(88,196,106,.55)');
-    events.emit('potLanded', { good: true, levelDeg: level });
+    // the player's landing gets its grade pop from the score keeper; a bot's keeps the plain one
+    if (!mine) this.ctx.sys.hud?.pop('THUNK! Level landing', pot.kinP.clone().setY(pot.kinP.y + 1.2), 'good', 1.4);
+    events.emit('potLanded', { good: true, levelDeg: level, grade, by, dx, stringNo: pot.stringNo, pot: pot.number });
     this.potsHauled++;
   }
 
@@ -545,6 +580,25 @@ export class PotSystem {
 
   /** Smoothed deck level (what the spirit level shows and the landing judges). */
   level = 0;
+  /** The levelest |deck level| seen over the last `ms` (the landing grace). */
+  minRecentLevel(ms: number): number {
+    const since = this.ctx.time - ms / 1000 - 1e-6;
+    let m = Math.abs(this.deckLevelDeg());
+    // newest first, until the samples are older than the grace
+    for (let n = 0, i = this.levelHead; n < this.levelCount; n++, i = (i - 1 + LEVEL_RING) % LEVEL_RING) {
+      if (this.levelT[i] < since) break;
+      if (this.levelV[i] < m) m = this.levelV[i];
+    }
+    return m;
+  }
+  /** The green window for this landing (the trip's tier, plus Mo holding her steady after two misses). */
+  levelWindow(): number {
+    return config.fishing.levelWindowDeg + (this.steadyMisses >= 2 ? config.fishing.steadyHandBonusDeg : 0);
+  }
+  /** The gold "dead level" core inside the window. */
+  levelCore(): number {
+    return config.fishing.levelPerfectDeg;
+  }
   /** Signed deck level angle for landing: roll dominates, pitch counts a little. */
   deckLevelDeg(): number {
     return this.level;
@@ -562,6 +616,11 @@ export class PotSystem {
     const ctx = this.ctx;
     this.hauling = false;
     this.level += (this.rawLevelDeg() - this.level) * Math.min(1, dt * 8);
+    // the same value the bubble shows, kept for the release grace
+    this.levelHead = (this.levelHead + 1) % LEVEL_RING;
+    this.levelT[this.levelHead] = ctx.time;
+    this.levelV[this.levelHead] = Math.abs(this.deckLevelDeg());
+    this.levelCount = Math.min(LEVEL_RING, this.levelCount + 1);
     // auto-crane the next pot onto the cradle while setting
     if (this.autoCrane && this.settingAllowed && !this.cradlePot && this.cradleMode === 'idle' && !this.blockPot) {
       const str = this.strings[this.settingString];
@@ -646,6 +705,7 @@ export class PotSystem {
         // reel in to the hang length
         pot.ropeLen = Math.max(config.fishing.hangLength, pot.ropeLen - dt * 0.6);
         this.applyRope(pot, it, dt);
+        if (it.heldBy) pot.guideBy = (it.heldBy as unknown as Crew).id;
         // guided landing: whoever grabs it pulls it over the cradle
         this.potOnCradle(0, _v2, _q);
         _v2.x += 0.6; // aim a little past the cradle so it settles over it
@@ -772,6 +832,7 @@ export class PotSystem {
     let spawned = 0;
     let auto = 0;
     let golden = false;
+    const tipId = ++this.tipSeq;
     c.crabs.forEach((data, i) => {
       if (onDeck + spawned >= maxBodies && data.species !== 'golden') {
         // the rest go straight down the chute, sorted by the boat's luck
@@ -782,6 +843,7 @@ export class PotSystem {
       const r = this.spotRng;
       const p = new THREE.Vector3(-1.05 + r.next() * 0.3, 1.5 + r.next() * 0.4, L.cradle.center.z - 0.7 + (i % 6) * 0.28);
       const v = new THREE.Vector3(1.6 + r.next() * 1.6, 1.2 + r.next() * 1.2, (r.next() - 0.5) * 1.4);
+      data.tipId = tipId;
       later((i * 55) / 1000, () => crabs.spawn(p, data, v));
       spawned++;
       if (data.species === 'golden') golden = true;
@@ -789,7 +851,7 @@ export class PotSystem {
     if (auto) this.ctx.sys.hud?.toast(`+${auto} crab straight down the chute`, '#fff3c0');
     sfx.play('clatter', { volume: 1 });
     sfx.play('chatter', { volume: 0.7, pitch: 1.2, delay: 0.25 });
-    events.emit('potTipped', { count: c.crabs.length });
+    events.emit('potTipped', { count: c.crabs.length, spawned, tipId });
     if (golden) {
       later((380) / 1000, () => {
         sfx.play('chime');
@@ -1037,8 +1099,9 @@ export class PotSystem {
     const lv = this.deckLevelDeg();
     const sl = art.spiritLevel;
     sl.bubble.position.x = clamp(lv / 15, -1, 1) * 0.38;
-    const inWin = Math.abs(lv) <= config.fishing.levelWindowDeg;
-    ((sl.window.material as THREE.MeshStandardMaterial).emissive as THREE.Color).setHex(inWin ? 0x3aff6a : 0x1d6a2a);
+    // gold in the dead-level core, green in the window, dark outside (the HUD level reads the same numbers)
+    const alv = Math.abs(lv);
+    ((sl.window.material as THREE.MeshStandardMaterial).emissive as THREE.Color).setHex(alv <= this.levelCore() ? 0xffd24a : alv <= this.levelWindow() ? 0x3aff6a : 0x1d6a2a);
     // hauler drum spins, winch sound follows haul speed
     if (this.hauling) art.haulerDrum.rotation.x += 0.25;
     this.winch.setVolume(this.hauling ? 0.8 : 0, 0.1);

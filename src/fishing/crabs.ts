@@ -27,7 +27,12 @@ export interface CrabData {
   hatched?: boolean;
   squash?: number; // 0..1 landing squash, decays
   vyPrev?: number;
+  /** which tip of the cradle it came out of (Clean Table is judged per tip) */
+  tipId?: number;
 }
+
+/** A sort counts for whoever let go of the crab within this many seconds before it landed. */
+const CREDIT_SEC = 4.0;
 
 const MAX = 96;
 const _m = new THREE.Matrix4();
@@ -72,6 +77,26 @@ export class CrabSystem {
     this.goldenSparkle.frustumCulled = false;
     ctx.boatGroup.add(this.goldenSparkle);
     ctx.sys.crabs = this;
+    // trips 1–2: a crab in the player's mitten says what to do with it
+    const prevGrab = ctx.sys.onGrab;
+    ctx.sys.onGrab = (c: Crew, it: Item) => {
+      prevGrab?.(c, it);
+      const d = it.data.crab as CrabData | undefined;
+      if (!d) return;
+      it.data.label = c.id === 'player' && config.sort.hints ? CrabSystem.hint(d) : undefined;
+    };
+  }
+
+  /** The teaching label: keeper ✓ or why it goes back. */
+  static hint(d: CrabData): string {
+    if (d.keep) return d.species === 'golden' ? 'keeper ✓ (golden!)' : 'keeper ✓';
+    return d.sex === 'f' ? 'throw back: female' : 'throw back: short';
+  }
+
+  /** Who sorted it: whoever let go of it in the last few seconds. */
+  private creditOf(it: Item): string | undefined {
+    const by = it.data.lastBy as string | undefined;
+    return by && this.ctx.time - (it.data.lastHeldAt ?? -1e9) <= CREDIT_SEC ? by : undefined;
   }
 
   get capacity(): number {
@@ -114,7 +139,7 @@ export class CrabSystem {
     const correct = !d.keep;
     if (correct) this.released.correct++;
     else this.released.wrong++;
-    events.emit('crabReleased', { kind: d.species, correct });
+    events.emit('crabReleased', { kind: d.species, correct, by: this.creditOf(it), tipId: d.tipId });
     later((450) / 1000, () => sfx.play('plop', { pitch: 1.3, volume: 0.6 }));
   }
 
@@ -123,9 +148,11 @@ export class CrabSystem {
     const d = it.data.crab as CrabData;
     d.hatched = true;
     this.tank.push({ species: d.species, weight: d.weight, correct: d.keep, at: this.ctx.time });
-    events.emit('crabKept', { kind: d.species, correct: d.keep });
+    const by = this.creditOf(it);
+    events.emit('crabKept', { kind: d.species, correct: d.keep, by, tipId: d.tipId, golden: d.species === 'golden' });
     sfx.play('knock', { volume: 0.8, pitch: 0.9 + this.rng.range(0, 0.2) });
-    sfx.play('plus', { volume: 0.5, delay: 0.08 });
+    // the player's sorts ring their own rising ladder (see Feedback)
+    if (!(by === 'player' && d.keep)) sfx.play('plus', { volume: 0.5, delay: 0.08 });
     this.removeCrab(it);
   }
 
