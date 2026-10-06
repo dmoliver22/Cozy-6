@@ -10,7 +10,8 @@ import { config } from '../config';
 import type { Sea, SeaUniforms } from './waves';
 import { HALF_BEAM, STERN_Z, BOW_Z } from '../boat/layout';
 import { SEA_VERT, SEA_FRAG } from './seaShader';
-import { seaLight, setSeaLight } from './seaLook';
+import { seaLight, setSeaLight, seaWorld, SEA_FOAM, SEA_MARKERS } from './seaLook';
+import { seaDetailTexture } from './detailNormals';
 
 function makeGrid(segments: number, size: number): THREE.BufferGeometry {
   const n = segments + 1;
@@ -72,6 +73,33 @@ const SWELL_STORM = config.weather.phases.storm.swell;
 
 const _m = new THREE.Matrix4();
 const _v = new THREE.Vector3();
+const _c = new THREE.Color();
+
+/**
+ * The sea's palette (linear, before tone mapping) for the golden-hour and storm poles: the art
+ * director's slate teal (troughs ~#12303a, lit crests ~#2e5a62 on screen; storm troughs ~#1b2c35
+ * so the swell keeps its form) and a green-teal crest glow. The live look still steers it: each
+ * colour is scaled by how far the look's own sea colour sits from its value at the same storm
+ * amount (1 when the look is untouched), so retuning look.sea moves the sea with it.
+ */
+const PALETTE = {
+  golden: { deep: new THREE.Color(0.016, 0.043, 0.054), mid: new THREE.Color(0.05, 0.118, 0.132), sub: new THREE.Color(0x3e8c7e) },
+  storm: { deep: new THREE.Color(0.021, 0.039, 0.05), mid: new THREE.Color(0.064, 0.096, 0.108), sub: new THREE.Color(0x4f7f78) },
+};
+const LOOK_GOLDEN = computeLook(0, 0, goldenLook());
+const LOOK_STORM = computeLook(1, 0, goldenLook());
+const GOLD = new THREE.Color(0xffc77a);
+const GOLDEN_SUN = LOOK_GOLDEN.sunIntensity * ((LOOK_GOLDEN.sunColor.r + LOOK_GOLDEN.sunColor.g + LOOK_GOLDEN.sunColor.b) / 3);
+
+/** out = lerp(pal.golden, pal.storm, t) × clamp(look / lerp(lookGolden, lookStorm, t)) per channel. */
+function graded(out: THREE.Color, pg: THREE.Color, ps: THREE.Color, look: THREE.Color, lg: THREE.Color, ls: THREE.Color, t: number): THREE.Color {
+  const ch = (p0: number, p1: number, l: number, l0: number, l1: number) => {
+    const ref = l0 + (l1 - l0) * t;
+    const k = ref > 1e-4 ? THREE.MathUtils.clamp(l / ref, 0.5, 2) : 1;
+    return (p0 + (p1 - p0) * t) * k;
+  };
+  return out.setRGB(ch(pg.r, ps.r, look.r, lg.r, ls.r), ch(pg.g, ps.g, look.g, lg.g, ls.g), ch(pg.b, ps.b, look.b, lg.b, ls.b));
+}
 
 interface WakePoint {
   x: number;
@@ -93,6 +121,8 @@ export class SeaMesh {
   /** renders since the last applyLook(); the sea looks after itself if nobody drives it */
   private rendersSinceLook = 0;
   private ownLook = goldenLook();
+  /** setWind() was called: stop following seaWorld's wind */
+  private windSet = false;
 
   constructor(segments: number) {
     const look = goldenLook();
@@ -131,8 +161,12 @@ export class SeaMesh {
       uSeaMid: { value: look.sea.mid.clone() },
       uSeaSub: { value: look.sea.subsurface.clone() },
       uSeaFoam: { value: look.sea.foam.clone() },
+      uSpecTint: { value: new THREE.Color(1, 0.5, 0.17) },
       uSeaParams: { value: new THREE.Vector4() },
       uSeaState: { value: new THREE.Vector4(0, 0.1, 1, 0) },
+      uSeaLight: { value: new THREE.Vector4(1, 2.2, 1.8, 0) },
+      uMarkers: { value: seaWorld.markers.map(() => new THREE.Vector4()) },
+      uDetail: { value: seaDetailTexture() },
       uWind: { value: wind },
       uWake: { value: Array.from({ length: WAKE_N }, () => new THREE.Vector4()) },
       uWakeBox: { value: new THREE.Vector4(0, 0, 0, 0) },
@@ -173,7 +207,7 @@ export class SeaMesh {
   }
 
   private defines(): Record<string, number> {
-    return { SEA_DETAIL: this.detail, WAKE_N: this.detail === 1 ? WAKE_N_LOW : WAKE_N };
+    return { SEA_DETAIL: this.detail, WAKE_N: this.detail === 1 ? WAKE_N_LOW : WAKE_N, MARKERS_N: SEA_MARKERS };
   }
 
   /**
@@ -185,6 +219,7 @@ export class SeaMesh {
     const u = this.uniforms;
     this.rendersSinceLook = 0;
     setSeaLight(look);
+    const t = seaLight.storm;
     (u.uSunDirection.value as THREE.Vector3).copy(look.sunDir);
     (u.uSunColor.value as THREE.Color).copy(seaLight.sun);
     (u.uAmbient.value as THREE.Color).copy(seaLight.ambient);
@@ -192,16 +227,29 @@ export class SeaMesh {
     (u.uSkyHorizon.value as THREE.Color).copy(look.skyHorizon);
     (u.uSkyGlow.value as THREE.Color).copy(look.skyGlow);
     (u.uHaze.value as THREE.Color).copy(look.fogColor);
-    (u.uSeaDeep.value as THREE.Color).copy(look.sea.deep);
-    (u.uSeaMid.value as THREE.Color).copy(look.sea.mid);
-    (u.uSeaSub.value as THREE.Color).copy(look.sea.subsurface);
-    (u.uSeaFoam.value as THREE.Color).copy(look.sea.foam);
+    const P = PALETTE,
+      g = LOOK_GOLDEN.sea,
+      st = LOOK_STORM.sea;
+    graded(u.uSeaDeep.value as THREE.Color, P.golden.deep, P.storm.deep, look.sea.deep, g.deep, st.deep, t);
+    graded(u.uSeaMid.value as THREE.Color, P.golden.mid, P.storm.mid, look.sea.mid, g.mid, st.mid, t);
+    graded(u.uSeaSub.value as THREE.Color, P.golden.sub, P.storm.sub, look.sea.subsurface, g.subsurface, st.subsurface, t);
+    (u.uSeaFoam.value as THREE.Color).copy(SEA_FOAM);
+    // the sun's highlight: its colour pushed toward gold, max channel 1 (intensity is separate)
+    const sc = look.sunColor;
+    const m = Math.max(sc.r, sc.g, sc.b, 1e-3);
+    _c.setRGB(sc.r / m, sc.g / m, sc.b / m).lerp(GOLD, 0.5);
+    (u.uSpecTint.value as THREE.Color).copy(_c).multiplyScalar(1 / Math.max(_c.r, _c.g, _c.b, 1e-3));
     (u.uSeaParams.value as THREE.Vector4).set(look.sea.glitter, look.sea.roughness, look.sea.reflect, look.sunDisc);
-    (u.uSeaState.value as THREE.Vector4).w = seaLight.storm;
+    (u.uSeaState.value as THREE.Vector4).w = t;
+    const sunLum = look.sunIntensity * ((sc.r + sc.g + sc.b) / 3);
+    // x sun strength vs golden hour, y how much the swell's slope is exaggerated for shading
+    // (a lot in the low calm swell, little in the storm's big one), z sun luminance
+    (u.uSeaLight.value as THREE.Vector4).set(THREE.MathUtils.clamp(sunLum / GOLDEN_SUN, 0, 1), 2.4 - 1.1 * t, sunLum, 0);
   }
 
   /** Wind for the storm streaks and detail drift (world XZ direction, strength 0..1). Optional. */
   setWind(dir: THREE.Vector2, strength: number): void {
+    this.windSet = true;
     const l = Math.hypot(dir.x, dir.y) || 1;
     (this.uniforms.uWind.value as THREE.Vector3).set(dir.x / l, dir.y / l, strength);
   }
@@ -240,6 +288,15 @@ export class SeaMesh {
     st.x = THREE.MathUtils.clamp((sea.swell - SWELL_CALM) / (SWELL_STORM - SWELL_CALM), 0, 1);
     st.y = Math.max(0.02, maxPinch);
     st.z = Math.max(0.3, crestH * 0.8);
+
+    // floating gear and the weather's wind (seaWorld, gathered by SprayFx)
+    const mk = u.uMarkers.value as THREE.Vector4[];
+    for (let i = 0; i < mk.length; i++) mk[i].copy(seaWorld.markers[i]);
+    if (seaWorld.hasWind && !this.windSet) {
+      const wv = u.uWind.value as THREE.Vector3;
+      const l = seaWorld.windDir.length() || 1;
+      wv.set(seaWorld.windDir.x / l, seaWorld.windDir.y / l, seaWorld.wind);
+    }
 
     // boat matrix → stern position, heave rate
     _m.copy(boatMatrixInv).invert();

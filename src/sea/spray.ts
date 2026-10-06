@@ -14,12 +14,13 @@ const VERT = /* glsl */ `
 attribute float aSize;
 attribute float aAlpha;
 attribute vec3 aVel;
-attribute vec2 aMeta; // seed, kind (0 droplet, 1 mist)
+attribute vec2 aMeta; // seed, kind (0 droplet, 1 mist, 2 big soft puff)
 uniform float uScale;
 uniform vec2 uViewport;
 uniform vec3 uColor;
 uniform vec3 uSunDir;
 uniform vec3 uSun;
+uniform vec3 uSunTint;
 uniform vec3 uAmbient;
 varying float vAlpha;
 varying vec3 vCol;
@@ -38,13 +39,23 @@ void main() {
   float el = aMeta.y > 0.5 ? 1.0 : 1.0 + clamp(len / max(size * 0.6, 1.0), 0.0, 2.2);
   vec2 dir = len > 1e-3 ? dpx / len : vec2(1.0, 0.0);
   vStretch = vec3(dir.x, -dir.y, el);
-  gl_PointSize = max(size * el, 1.0);
+  // never smaller than 2.5 px, or droplets alias into single-pixel dots
+  gl_PointSize = max(size * el, 2.5);
   gl_Position = c1;
-  // light: sky fill + sun, and a warm glow when looking toward the sun through the spray
+  // light: cool sky fill, then the low sun. Droplets lit from the front or glowing with the
+  // sun behind them (forward scattering) take the sun's warm colour; mist a little less.
   vec3 wp = (modelMatrix * vec4(position, 1.0)).xyz;
   vec3 view = normalize(wp - cameraPosition);
-  float fwd = pow(max(dot(view, uSunDir), 0.0), 4.0);
-  vCol = uColor * (uAmbient * 0.3 + uSun * 0.08 + 0.55) + uSun * fwd * (aMeta.y > 0.5 ? 0.2 : 0.5);
+  float back = pow(max(dot(view, uSunDir), 0.0), 3.0);
+  float front = max(-dot(view, uSunDir), 0.0);
+  float sunUp = smoothstep(-0.05, 0.15, uSunDir.y);
+  float sunlit = clamp(0.75 + 0.25 * max(back, front), 0.0, 1.0) * sunUp;
+  float sunLum = dot(uSun, vec3(0.3333));
+  vec3 sky = uColor * (0.5 + uAmbient * 0.28);
+  // (the tint is pushed a little past the sun's own colour: tone mapping desaturates brights)
+  vec3 warm = pow(uSunTint, vec3(1.6)) * (1.4 + 0.3 * sunLum) * (1.0 + 0.5 * back);
+  float mist = step(0.5, aMeta.y);
+  vCol = mix(sky, warm, (0.75 - 0.12 * mist) * sunlit) + uSun * back * (0.25 - 0.15 * mist) * sunUp;
 }`;
 
 const FRAG = /* glsl */ `
@@ -68,10 +79,16 @@ void main() {
     if (dm > 0.48) discard;
     a = 1.0;
     col *= 0.85 + 0.5 * step(0.5, fract(vMeta.x * 7.0)) * (1.0 - smoothstep(0.0, 0.2, dm));
+  } else if (vMeta.y > 1.5) {
+    // big soft puff: a faint, warm haze hanging over a splash
+    a = (1.0 - smoothstep(0.0, 1.0, r));
+    a *= a * 0.28;
   } else if (vMeta.y > 0.5) {
-    // mist: a soft, slightly lumpy puff
-    a = (1.0 - smoothstep(0.0, 1.0, r)) * (0.75 + 0.25 * sin(atan(q.y, q.x) * 3.0 + vMeta.x * 20.0));
-    a *= 0.62;
+    // mist: a soft puff, its densest point a little off centre (round, never star-shaped)
+    vec2 off = (vec2(fract(vMeta.x * 7.3), fract(vMeta.x * 13.7)) - 0.5) * 0.3;
+    float rr = length(q * 2.0 - off);
+    a = 1.0 - smoothstep(0.0, 1.0, max(r, rr * 0.85));
+    a *= a * 0.55;
   } else {
     // droplet: bright core, soft rim, a tiny highlight
     a = 1.0 - smoothstep(0.45, 1.0, r);
@@ -138,6 +155,7 @@ export class ParticleCloud {
         uViewport: { value: new THREE.Vector2(1280, 720) },
         uSunDir: { value: seaLight.sunDir },
         uSun: { value: seaLight.sun },
+        uSunTint: { value: seaLight.sunTint },
         uAmbient: { value: seaLight.ambient },
         uShard: { value: style.shard ? 1 : 0 },
       },
@@ -161,7 +179,7 @@ export class ParticleCloud {
     (this.mat.uniforms.uViewport.value as THREE.Vector2).set(w, h);
   }
 
-  /** `kind` 0 = droplet, 1 = mist puff. */
+  /** `kind` 0 = droplet, 1 = mist puff, 2 = big soft puff (faint haze over a splash). */
   emit(p: THREE.Vector3, v: THREE.Vector3, life: number, size: number, kind = 0): void {
     const i = this.next;
     this.next = (this.next + 1) % this.capacity;
@@ -227,12 +245,20 @@ export class ParticleCloud {
       v.set((Math.random() - 0.5) * 0.8, speed * (1.1 + Math.random() * 0.6), (Math.random() - 0.5) * 0.8);
       this.emit(p, v, life * (0.7 + Math.random() * 0.5), size * (0.7 + Math.random() * 0.7));
     }
-    const puffs = 2 + Math.round(radius * 3);
+    const puffs = 1 + Math.round(radius * 2);
     for (let k = 0; k < puffs; k++) {
       const a = Math.random() * Math.PI * 2;
       p.set(center.x + Math.cos(a) * radius, center.y + 0.2 + Math.random() * 0.3, center.z + Math.sin(a) * radius);
       v.set(Math.cos(a) * 0.6, 0.6 + Math.random() * 0.8, Math.sin(a) * 0.6);
-      this.emit(p, v, life * (1.3 + Math.random() * 0.7), size * (3.6 + radius * 2.2 + Math.random() * 2.0), 1);
+      this.emit(p, v, life * (1.3 + Math.random() * 0.7), size * (3.2 + radius * 1.8 + Math.random() * 1.5), 1);
+    }
+    // two or three big, soft, warm puffs of spray haze, so a splash reads at gameplay zoom
+    const haze = 2 + (radius > 0.5 ? 1 : 0);
+    for (let k = 0; k < haze; k++) {
+      const a = Math.random() * Math.PI * 2;
+      p.set(center.x + Math.cos(a) * radius * 0.6, center.y + 0.5 + Math.random() * 0.5, center.z + Math.sin(a) * radius * 0.6);
+      v.set(Math.cos(a) * 0.5, 0.8 + Math.random() * 0.6, Math.sin(a) * 0.5);
+      this.emit(p, v, life * (1.7 + Math.random() * 0.6), size * (6.5 + radius * 3.0 + Math.random() * 2.0), 2);
     }
   }
 

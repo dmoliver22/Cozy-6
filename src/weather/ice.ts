@@ -4,9 +4,10 @@
  * crisp cracks, shards that tumble downhill, visible thinning — and a bigger shatter on the last tap.
  *
  * Visuals: the deck frost is one merged overlay mesh whose six zones read their ice level from a
- * uniform array (glossy frost that creeps in as blotches of feathery crystals and glazes over when
- * thick); the rail ice is one merged mesh of chunky strips plus icicles on the outboard side.
- * Two draw calls in all, whatever the ice level.
+ * uniform array: blotches of feathery crystals that glaze over when thick, see-through enough for
+ * the planks to show, with a sharp sun highlight on the crystals, a cool sky sheen at grazing
+ * angles and sparse glints on random facets. The rail ice is one merged mesh of chunky,
+ * translucent strips plus icicles on the outboard side. Two draw calls in all, whatever the level.
  */
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -19,6 +20,7 @@ import { makeMallet } from '../art/items';
 import type { Ctx } from '../game/ctx';
 import { events } from '../core/events';
 import { sfx } from '../audio';
+import { seaLight } from '../sea/seaLook';
 
 const _v = new THREE.Vector3();
 
@@ -167,13 +169,13 @@ function frostTexture(): THREE.DataTexture {
   g.fillStyle = '#000';
   g.fillRect(0, 0, N, N);
   g.lineCap = 'round';
-  for (let f = 0; f < 70; f++) {
+  for (let f = 0; f < 60; f++) {
     const x0 = rnd() * N,
       y0 = rnd() * N,
       ang = rnd() * Math.PI * 2,
-      len = 10 + rnd() * 34,
-      alpha = 0.35 + rnd() * 0.5,
-      lw = 0.9 + rnd() * 0.6;
+      len = 14 + rnd() * 30,
+      alpha = 0.45 + rnd() * 0.5,
+      lw = 1.8 + rnd() * 1.2;
     for (const dx of [0, -N, N])
       for (const dy of [0, -N, N]) {
         g.strokeStyle = `rgba(255,255,255,${alpha})`;
@@ -182,8 +184,8 @@ function frostTexture(): THREE.DataTexture {
         g.moveTo(x0 + dx, y0 + dy);
         g.lineTo(x0 + dx + Math.cos(ang) * len, y0 + dy + Math.sin(ang) * len);
         g.stroke();
-        g.lineWidth = 0.6;
-        for (let b = 0.15; b < 0.95; b += 0.12) {
+        g.lineWidth = 1.1;
+        for (let b = 0.15; b < 0.95; b += 0.14) {
           const bx = x0 + dx + Math.cos(ang) * len * b,
             by = y0 + dy + Math.sin(ang) * len * b;
           const bl = len * 0.22 * (1 - b * 0.6);
@@ -198,9 +200,9 @@ function frostTexture(): THREE.DataTexture {
       }
   }
   // sparkle specks
-  for (let i = 0; i < 500; i++) {
-    g.fillStyle = `rgba(255,255,255,${0.2 + rnd() * 0.6})`;
-    g.fillRect(rnd() * N, rnd() * N, 1, 1);
+  for (let i = 0; i < 260; i++) {
+    g.fillStyle = `rgba(255,255,255,${0.25 + rnd() * 0.6})`;
+    g.fillRect(rnd() * N, rnd() * N, 2, 2);
   }
   const img = g.getImageData(0, 0, N, N).data;
   // coverage: tileable value noise, 3 octaves
@@ -252,12 +254,15 @@ function tagIce(geo: THREE.BufferGeometry, zone: number, baseY: number, cx: numb
   return g;
 }
 
-/** A flat frost patch (boat-local) with UVs in metres / 1.8. */
+/** Metres of deck one tile of the frost texture covers (crystals a few cm wide, feathers ~15–45 cm). */
+const FROST_TILE = 3.0;
+
+/** A flat frost patch (boat-local) with UVs in metres / FROST_TILE. */
 function frostPatch(cx: number, cz: number, w: number, d: number, zone: number): THREE.BufferGeometry {
   const geo = new THREE.PlaneGeometry(w, d, 1, 1).rotateX(-Math.PI / 2).translate(cx, 0.015, cz);
   const pos = geo.attributes.position;
   const uv = geo.attributes.uv;
-  for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / 1.8, pos.getZ(i) / 1.8);
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / FROST_TILE, pos.getZ(i) / FROST_TILE);
   return tagIce(geo, zone, 0, cx, 0);
 }
 
@@ -283,9 +288,29 @@ attribute vec4 aIce;
 uniform float uIce[6];
 varying float vIceLv;`;
 
+/** Shared light for the ice shaders (live references into seaLight, refreshed by the sea's applyLook). */
+const iceLight = () => ({ uSunDir: { value: seaLight.sunDir }, uSun: { value: seaLight.sun }, uAmb: { value: seaLight.ambient } });
+
+const ICE_FRAG_PARS = /* glsl */ `#include <common>
+varying float vIceLv;
+uniform vec3 uSunDir;
+uniform vec3 uSun;
+uniform vec3 uAmb;
+float iceHash(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+// GGX normal distribution
+float iceD(float a, float ndh) {
+  float a2 = a * a;
+  float d = ndh * ndh * (a2 - 1.0) + 1.0;
+  return a2 / (PI * d * d);
+}`;
+
 function frostMaterial(levels: { value: number[] }): THREE.MeshStandardMaterial {
   const m = new THREE.MeshStandardMaterial({
-    color: 0xeef8ff,
+    color: 0xeaf6ff,
     roughness: 0.2,
     metalness: 0,
     transparent: true,
@@ -295,11 +320,15 @@ function frostMaterial(levels: { value: number[] }): THREE.MeshStandardMaterial 
     polygonOffsetUnits: -2,
   });
   m.map = frostTexture();
+  // the crystals are raised: their edges tilt the normal, so they catch the light
+  m.bumpMap = m.map;
+  m.bumpScale = 3.0;
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uIce = levels;
+    Object.assign(sh.uniforms, iceLight());
     sh.vertexShader = sh.vertexShader.replace('#include <common>', ICE_VERT_PARS).replace('#include <begin_vertex>', '#include <begin_vertex>\n  vIceLv = uIce[int(aIce.x + 0.5)];');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vIceLv;')
+      .replace('#include <common>', ICE_FRAG_PARS)
       .replace(
         '#include <map_fragment>',
         /* glsl */ `vec4 frostT = texture2D(map, vMapUv);
@@ -308,20 +337,64 @@ function frostMaterial(levels: { value: number[] }): THREE.MeshStandardMaterial 
         float th = 1.0 - lv * 1.2;
         float cov = smoothstep(th, th + 0.1, frostT.a * 0.85 + frostT.r * 0.2);
         float glaze = smoothstep(0.45, 0.95, lv);
-        diffuseColor.rgb *= mix(vec3(0.78, 0.88, 0.96), vec3(1.0), clamp(frostT.r * 1.2 + glaze * 0.3, 0.0, 1.0));
-        diffuseColor.a = cov * clamp(0.42 + 0.45 * frostT.r + 0.25 * glaze, 0.0, 0.88);`,
+        float cryst = frostT.r;
+        diffuseColor.rgb *= mix(vec3(0.72, 0.85, 0.95), vec3(1.0), clamp(cryst * 1.4 + glaze * 0.15, 0.0, 1.0));
+        // see-through: the planks show under thin frost (<= 0.58); crystals read whiter
+        diffuseColor.a = cov * clamp(0.18 + 0.45 * cryst + 0.06 * glaze, 0.0, 0.58);`,
       )
-      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(0.42, 0.08, glaze) + frostT.r * 0.15;');
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(0.32, 0.12, glaze) + cryst * 0.1;')
+      .replace(
+        '#include <opaque_fragment>',
+        /* glsl */ `{
+          // glossy frost: a sharp sun highlight on the (bumped) crystals, a cool sky sheen toward
+          // grazing angles, and sparse glints where a random facet mirrors the sun
+          vec3 Nv = normal;
+          vec3 Vv = normalize(vViewPosition);
+          vec3 Lv = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
+          vec3 Hv = normalize(Lv + Vv);
+          float ndv = clamp(dot(Nv, Vv), 0.0, 1.0);
+          float ndl = clamp(dot(Nv, Lv), 0.0, 1.0);
+          float fres = 0.04 + 0.96 * pow(1.0 - clamp(dot(Vv, Hv), 0.0, 1.0), 5.0);
+          float spec = iceD(mix(0.18, 0.12, glaze), clamp(dot(Nv, Hv), 0.0, 1.0)) * fres * ndl / max(4.0 * ndl * ndv, 0.05);
+          spec = min(spec, 3.0) * cov;
+          float lum = dot(uSun, vec3(0.3333));
+          vec3 sunTint = uSun / max(lum, 1e-3);
+          outgoingLight += mix(sunTint, vec3(1.0), 0.6) * spec * lum * 0.35;
+          // a broad glossy sheen across the patch toward the sun (the smooth surface under the
+          // crystals), strongest once it glazes over
+          float sheen = iceD(0.4, clamp(dot(nonPerturbedNormal, Hv), 0.0, 1.0)) * (0.3 + 0.5 * glaze) * cov;
+          outgoingLight += mix(sunTint, vec3(1.0), 0.7) * sheen * lum * 0.4;
+          // cool sky sheen
+          float rim = smoothstep(0.0, 0.55, 1.0 - ndv) * cov * (0.6 + 0.4 * glaze);
+          float lightLv = dot(uAmb, vec3(0.3333)) * 0.7 + lum * 0.12;
+          outgoingLight = mix(outgoingLight, vec3(0.874, 0.953, 1.0) * lightLv, 0.4 * rim);
+          // glints: ~3 % of 5 cm cells get a random facet; it flashes when that facet mirrors the sun
+          vec2 cell = floor(vMapUv * 60.0);
+          float h = iceHash(cell);
+          float glint = 0.0;
+          if (h > 0.97) {
+            vec3 jit = vec3(iceHash(cell + 3.1), iceHash(cell + 7.7), iceHash(cell + 1.3)) - 0.5;
+            vec3 Nf = normalize(Nv + jit * 1.2);
+            float fs = iceD(0.12, clamp(dot(Nf, Hv), 0.0, 1.0)) * 0.08;
+            vec2 f = fract(vMapUv * 60.0) - 0.5;
+            glint = step(0.5, fs) * (1.0 - smoothstep(0.15, 0.45, length(f))) * cov;
+          }
+          outgoingLight += mix(sunTint, vec3(1.0), 0.5) * glint * (1.0 + lum) * 1.5;
+          diffuseColor.a = clamp(max(diffuseColor.a, max(spec * 0.5, glint)) + 0.18 * rim + sheen * 0.15, 0.0, 1.0);
+        }
+        #include <opaque_fragment>`,
+      );
   };
-  m.customProgramCacheKey = () => 'ice-frost';
+  m.customProgramCacheKey = () => 'ice-frost-2';
   return m;
 }
 
 function railIceMaterial(levels: { value: number[] }): THREE.MeshStandardMaterial {
-  const m = new THREE.MeshStandardMaterial({ color: 0xe6f4ff, roughness: 0.12, metalness: 0, transparent: true, opacity: 0.9, emissive: 0x9fc8e0, emissiveIntensity: 0.08 });
+  const m = new THREE.MeshStandardMaterial({ color: 0xcfe6f4, roughness: 0.1, metalness: 0, transparent: true, opacity: 0.82, emissive: 0x9fc8e0, emissiveIntensity: 0.06 });
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uIce = levels;
     sh.uniforms.uMaxT = { value: config.ice.maxThickness * 2.5 };
+    Object.assign(sh.uniforms, iceLight());
     sh.vertexShader = sh.vertexShader.replace('#include <common>', ICE_VERT_PARS + '\nuniform float uMaxT;').replace(
       '#include <begin_vertex>',
       /* glsl */ `#include <begin_vertex>
@@ -338,8 +411,26 @@ function railIceMaterial(levels: { value: number[] }): THREE.MeshStandardMateria
       }
       transformed = mix(vec3(aIce.z, aIce.y, transformed.z), transformed, on);`,
     );
-    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vIceLv;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', ICE_FRAG_PARS).replace(
+      '#include <opaque_fragment>',
+      /* glsl */ `{
+        // translucent ice: clear where you look straight in, milky and bright at the silhouette,
+        // with a sharp sun highlight
+        vec3 Vv = normalize(vViewPosition);
+        vec3 Lv = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
+        vec3 Hv = normalize(Lv + Vv);
+        float ndv = clamp(dot(normal, Vv), 0.0, 1.0);
+        float ndl = clamp(dot(normal, Lv), 0.0, 1.0);
+        float rim = pow(1.0 - ndv, 2.0);
+        float lum = dot(uSun, vec3(0.3333));
+        float spec = min(iceD(0.14, clamp(dot(normal, Hv), 0.0, 1.0)) * 0.06 * ndl, 2.5);
+        outgoingLight = mix(outgoingLight, vec3(0.874, 0.953, 1.0) * (dot(uAmb, vec3(0.3333)) * 0.8 + lum * 0.15), 0.45 * rim);
+        outgoingLight += uSun / max(lum, 1e-3) * spec * lum * 0.3;
+        diffuseColor.a = clamp(0.5 + 0.45 * rim + spec * 0.3, 0.0, 0.95);
+      }
+      #include <opaque_fragment>`,
+    );
   };
-  m.customProgramCacheKey = () => 'ice-rail';
+  m.customProgramCacheKey = () => 'ice-rail-2';
   return m;
 }

@@ -48,7 +48,7 @@ void main() {
   vAlpha = on * edge;
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   float depth = max(1.0, -mv.z);
-  float size = uScale * (0.6 + aSeed * 0.8) / depth;
+  float size = uScale * (0.7 + aSeed * 0.8) / depth;
   // streak: screen-space motion over ~45 ms (exposure), in pixels
   vec4 c1 = projectionMatrix * mv;
   vec4 c2 = projectionMatrix * (modelViewMatrix * vec4(p + v * 0.045, 1.0));
@@ -61,7 +61,7 @@ void main() {
   vSoft = smoothstep(14.0, 3.0, depth);
   size *= 1.0 + vSoft * 1.5;
   vAlpha *= 1.0 - vSoft * 0.55;
-  gl_PointSize = max(1.5, size * el);
+  gl_PointSize = max(2.0, size * el);
   gl_Position = c1;
 }`;
 
@@ -78,10 +78,13 @@ void main() {
   vec2 q = vec2(dot(c, d), dot(c, vec2(-d.y, d.x)) * vStretch.z);
   float r = length(q) * 2.0;
   if (r > 1.0) discard;
-  float core = 1.0 - smoothstep(mix(0.25, 0.0, vSoft), 1.0, r);
-  // streaks thin toward their tail
-  core *= mix(1.0, 0.55 + 0.45 * smoothstep(-0.5, 0.3, q.x), step(1.3, vStretch.z));
-  gl_FragColor = vec4(uLight, core * vAlpha * 0.85);
+  // a soft, slightly out-of-focus disc (gaussian-ish falloff, no hard rim)
+  float core = 1.0 - smoothstep(mix(0.1, 0.0, vSoft), 1.0, r);
+  core *= core;
+  // streaks fade toward their tail (the flake leads, its motion blur trails)
+  float streak = smoothstep(1.3, 2.2, vStretch.z);
+  core *= mix(1.0, 0.35 + 0.65 * smoothstep(-0.45, 0.25, q.x), streak);
+  gl_FragColor = vec4(uLight, core * vAlpha * mix(0.8, 0.6, streak));
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;

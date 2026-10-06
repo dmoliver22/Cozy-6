@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { ParticleCloud } from './spray';
 import { RippleField } from './ripples';
 import type { Ctx } from '../game/ctx';
+import { seaWorld } from './seaLook';
 
 const _v = new THREE.Vector3();
 const _d = new THREE.Vector3();
@@ -110,7 +111,41 @@ export class SprayFx {
     }
   }
 
+  /**
+   * Tell the sea shading about the floating gear nearest the boat (so storm foam keeps clear of
+   * buoys and pot markers) and the weather's wind (streak direction).
+   */
+  private feedSea(): void {
+    const mk = seaWorld.markers;
+    for (const m of mk) m.set(0, 0, 0, 0);
+    const bp = this.ctx.boat.pos;
+    let n = 0;
+    for (const it of this.ctx.items.items) {
+      if (it.mode !== 'sea' || !it.visible) continue;
+      const d = Math.hypot(it.wp.x - bp.x, it.wp.z - bp.z);
+      if (d > 60) continue;
+      // keep the nearest few: fill free slots, then replace the farthest
+      let slot = n < mk.length ? n++ : -1;
+      if (slot < 0) {
+        let far = -1;
+        for (let i = 0; i < mk.length; i++) {
+          const di = Math.hypot(mk[i].x - bp.x, mk[i].y - bp.z);
+          if (di > d && (far < 0 || di > Math.hypot(mk[far].x - bp.x, mk[far].y - bp.z))) far = i;
+        }
+        slot = far;
+      }
+      if (slot >= 0) mk[slot].set(it.wp.x, it.wp.z, 3.0, 1);
+    }
+    const w = this.ctx.sys.weather as { windDir?: THREE.Vector2; wind?: number } | undefined;
+    if (w?.windDir) {
+      seaWorld.windDir.copy(w.windDir);
+      seaWorld.wind = w.wind ?? 0;
+      seaWorld.hasWind = true;
+    }
+  }
+
   update(dt: number): void {
+    this.feedSea();
     this.ripples.update(dt);
     this.world.update(dt);
     this.local.update(dt);
