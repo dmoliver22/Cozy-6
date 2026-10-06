@@ -36,6 +36,8 @@ const _v3 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const Z = new THREE.Vector3(0, 0, 1);
 const ID = new THREE.Quaternion();
+/** deck-level samples kept for the landing grace (32 steps is over 0.25 s even at 120 Hz) */
+const LEVEL_RING = 32;
 
 export const POT_DEF: ItemDef = {
   kind: 'pot',
@@ -148,8 +150,11 @@ export class PotSystem {
   specialsQueue: string[] = [];
   potsHauled = 0;
   readonly landings: { good: boolean; deg: number; grade?: string; by?: string }[] = [];
-  /** |deck level| samples over the last 150 ms: the landing grade forgives a late release */
-  private levelBuf: { t: number; v: number }[] = [];
+  /** |deck level| samples (a fixed ring, no per-step garbage): the landing grade forgives a late release */
+  private readonly levelT = new Float64Array(LEVEL_RING);
+  private readonly levelV = new Float32Array(LEVEL_RING);
+  private levelHead = -1;
+  private levelCount = 0;
   /** the player's missed landings in a row (two: Mo holds her steady) */
   steadyMisses = 0;
   private tipSeq = 0;
@@ -579,7 +584,11 @@ export class PotSystem {
   minRecentLevel(ms: number): number {
     const since = this.ctx.time - ms / 1000 - 1e-6;
     let m = Math.abs(this.deckLevelDeg());
-    for (const s of this.levelBuf) if (s.t >= since && s.v < m) m = s.v;
+    // newest first, until the samples are older than the grace
+    for (let n = 0, i = this.levelHead; n < this.levelCount; n++, i = (i - 1 + LEVEL_RING) % LEVEL_RING) {
+      if (this.levelT[i] < since) break;
+      if (this.levelV[i] < m) m = this.levelV[i];
+    }
     return m;
   }
   /** The green window for this landing (the trip's tier, plus Mo holding her steady after two misses). */
@@ -608,9 +617,10 @@ export class PotSystem {
     this.hauling = false;
     this.level += (this.rawLevelDeg() - this.level) * Math.min(1, dt * 8);
     // the same value the bubble shows, kept for the release grace
-    const buf = this.levelBuf;
-    buf.push({ t: ctx.time, v: Math.abs(this.deckLevelDeg()) });
-    while (buf.length && buf[0].t < ctx.time - 0.15) buf.shift();
+    this.levelHead = (this.levelHead + 1) % LEVEL_RING;
+    this.levelT[this.levelHead] = ctx.time;
+    this.levelV[this.levelHead] = Math.abs(this.deckLevelDeg());
+    this.levelCount = Math.min(LEVEL_RING, this.levelCount + 1);
     // auto-crane the next pot onto the cradle while setting
     if (this.autoCrane && this.settingAllowed && !this.cradlePot && this.cradleMode === 'idle' && !this.blockPot) {
       const str = this.strings[this.settingString];

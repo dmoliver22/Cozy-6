@@ -58,6 +58,8 @@ export class Crew {
   readonly throwTarget = new THREE.Vector3();
   // interaction
   target: Interactable | null = null;
+  /** sim time this crew member's controls last did anything (bots never wait on an idle player) */
+  lastActiveAt = -1e9;
   targetVerbs: Verb[] = [];
   activeVerb: Verb | null = null;
   activeTarget: Interactable | null = null;
@@ -221,6 +223,8 @@ export class Crew {
         break;
     }
     this.stepHat(dt);
+    const inp = this.input;
+    if (inp.move.lengthSq() > 0.01 || inp.use || inp.interact || inp.brace || inp.throwAim || inp.usePressed || inp.interactPressed || inp.throwRelease) this.lastActiveAt = this.ctx.time;
     consumeEdges(this.input);
   }
 

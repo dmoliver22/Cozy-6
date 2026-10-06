@@ -142,6 +142,14 @@ export const TIDES: Tide[] = [
 /** The date clock (the probes can stub `clock.now`). */
 export const clock = { now: (): Date => new Date() };
 
+/**
+ * The date this trip is fished on: captured once at boot (main.ts, with the daily seed) so a trip that
+ * runs past midnight is still recorded under the day whose water and tide it fished.
+ */
+export function tripDateKey(): string {
+  return (config.progress.dateKey ||= todayKey());
+}
+
 function keyOf(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
@@ -187,16 +195,16 @@ export function tideIndex(key: string = todayKey()): number {
   return tideCache.get(key) ?? raw(key);
 }
 
-/** The tide for the coming trip (−1 for none): never on the tutorial trip; ?tide=N forces one. */
-export function tideFor(save: SaveData, params: Record<string, string> = urlParams, key: string = todayKey()): number {
-  if (save.tripsCompleted === 0) return -1;
+/** The tide for the coming trip (−1 for none): ?tide=N forces one (even on a fresh save); never on the tutorial trip. */
+export function tideFor(save: SaveData, params: Record<string, string> = urlParams, key: string = tripDateKey()): number {
   if (params.tide !== undefined && /^(-1|[0-6])$/.test(params.tide)) return Number(params.tide);
+  if (save.tripsCompleted === 0) return -1;
   if (params.autostart === '1') return -1; // the probes fish today's exact config
   return tideIndex(key);
 }
 
 /** Apply today's tide on top of the tier (after applyTier). Returns the flavour index or −1. */
-export function applyTide(save: SaveData, params: Record<string, string> = urlParams, key: string = todayKey()): number {
+export function applyTide(save: SaveData, params: Record<string, string> = urlParams, key: string = tripDateKey()): number {
   const idx = tideFor(save, params, key);
   if (idx < 0) return -1;
   const w = config.weather,
@@ -261,7 +269,8 @@ export function rankLine(score: number, showScores = true): string {
 /** The Log's one tip: the first rule that matches. */
 export function tipFor(s: TripScore): string {
   const c = s.counts;
-  const graded = c.landAttempts + c.braceGraded + c.braceMiss + c.hookAttempts + c.sorts + c.wrongSorts;
+  // only what the player did: being knocked over by a wave while standing about isn't a graded action
+  const graded = c.landAttempts + c.braceGraded + c.hookAttempts + c.sorts + c.wrongSorts;
   if (c.landAttempts >= 2 && c.landPerfect / c.landAttempts < 0.3) return 'Let go as the bubble crosses the middle, not when it stops.';
   if (c.braceGraded > 0 && c.braceSafe / c.braceGraded > 0.5) return 'Wait for the gold arc. Early is safe; late is stylish.';
   if (c.sorts >= 6 && c.peakChain <= 3) return 'Grab the next crab before the last one lands.';
@@ -330,7 +339,7 @@ export interface LogView {
 }
 
 /** The end-of-trip card, with NEW BEST flags against the save (before recordTrip updates it). */
-export function logView(save: SaveData, s: TripScore, stats: TripStats, showScores = true, key: string = todayKey()): LogView {
+export function logView(save: SaveData, s: TripScore, stats: TripStats, showScores = true, key: string = tripDateKey()): LogView {
   const m = save.mastery ?? defaultMastery();
   const rank = rankFor(s.score);
   const next = config.score.ranks[rank + 1];
@@ -366,7 +375,7 @@ export function logView(save: SaveData, s: TripScore, stats: TripStats, showScor
 }
 
 /** Bank a finished trip: bests, lifetime counts, history (last 10), today's tide (last 14 dates), days at sea. */
-export function recordTrip(save: SaveData, s: TripScore, key: string = todayKey()): void {
+export function recordTrip(save: SaveData, s: TripScore, key: string = tripDateKey()): void {
   const m = (save.mastery ??= defaultMastery());
   const rank = rankFor(s.score);
   m.bestScore = Math.max(m.bestScore, s.score);
@@ -410,7 +419,7 @@ export interface ChartView {
   lastLand: string;
 }
 
-export function chartView(save: SaveData, showScores = true, params: Record<string, string> = urlParams, key: string = todayKey()): ChartView {
+export function chartView(save: SaveData, showScores = true, params: Record<string, string> = urlParams, key: string = tripDateKey()): ChartView {
   const tier = tierFor(save, params);
   const tide = tideFor(save, params, key);
   const T = TIERS[tier];

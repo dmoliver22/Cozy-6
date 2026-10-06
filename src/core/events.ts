@@ -38,9 +38,9 @@ export interface GameEvents {
   photo: { caption: string };
   tutorial: { step: string };
   /** a grapple throw came down: rawErr = metres from the un-assisted aim point to the buoy it hooked (or the nearest one) */
-  hooked: { by: string; rawErr: number; dist: number; hit: boolean; stringNo?: number };
+  hooked: { by: string; rawErr: number; dist: number; hit: boolean; stringNo?: number; pot?: number };
   /** a scored skill moment (player only) */
-  grade: { moment: 'land' | 'brace' | 'hook' | 'sort' | 'bonus'; grade: string; label: string; points: number; mult: number; localPos: THREE.Vector3; knots: number; chain?: number; big?: string; bigMinor?: boolean };
+  grade: { moment: 'land' | 'brace' | 'hook' | 'sort' | 'bonus'; grade: string; label: string; points: number; mult: number; localPos: THREE.Vector3; knots: number; chain?: number; chainUp?: boolean; big?: string; bigMinor?: boolean };
   streakBroken: { knots: number };
 }
 

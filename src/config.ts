@@ -260,6 +260,8 @@ export const config = {
     tier: 2,
     /** today's tide flavour index, or -1 for none */
     tide: -1,
+    /** the local date (YYYY-MM-DD) this trip is fished on, captured at boot ('' until then) */
+    dateKey: '',
   },
 
   bots: {

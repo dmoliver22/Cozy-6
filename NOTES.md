@@ -246,8 +246,10 @@ every gold target sits inside the old forgiving window.
 - **Credit and dibs.** `Crew.releaseHeld()` stamps `lastBy` / `lastHeldAt` on the item, so a sort
   counts for whoever let go of the crab in the last 4 s, and a landing for whoever last held the
   hanging pot (`pot.guideBy`). Bots leave a moment to a player lining it up: the landing while the
-  player stands within 3.5 m of the launcher with empty hands, the grapple within 2 m, a crab within
-  0.8 m of their boots. Each wait is capped at 6 s, so a parked player is never waited on.
+  player stands within 3.5 m of the launcher with empty hands (and nearer it than the sorting table),
+  the grapple within 2 m, a crab within 0.8 m of their boots. Each wait is capped at 6 s, and an idle
+  player (no input for 15 s, `Crew.lastActiveAt`) or a parked one is never waited on. A bot only lands
+  from beside the launcher spot when someone is standing on it.
 - **ScoreKeeper** (`game/score.ts`): `points = round(base × streakMult × weatherMult)`, where
   `streakMult = min(2.5, 1 + 0.25 × floor(knots / 3))` and the weather multiplier is calm 1, choppy
   1.25, storm 1.5. Knots come from PERFECT/GOOD/CLUTCH, RINGER/hooks, Clean Table/String, LIFELINE
@@ -258,11 +260,14 @@ every gold target sits inside the old forgiving window.
   missed landings in a row Mo "holds her steady": +1.5° on the window, shown on the HUD.
 - **Brace:** graded by how long the player had been braced at impact: ≤ 1.2 s PERFECT (the gold arc
   on the wave ring), ≤ 3 s GOOD, earlier SAFE; bracing within 0.4 s after impact and staying up is a
-  CLUTCH (slow-mo). The grade pops at the old "Held!" moment.
+  CLUTCH (slow-mo). The grade pops when the set resolves (1.6 s after impact), because a grip can
+  still break after the wash: braced but down at resolve is no grade and no untie.
 - **Sorting:** player sorts ≤ 3 s apart build a ×N chain (10 × N points, cap 8). A tip sorted in
   30 s with nothing wrong and at least half by the player is a Clean Table.
 - **Grapple:** graded on the raw aim (before the aim assist): within 1 m of the buoy is a RINGER,
-  a 12 m+ throw is a LONG CAST (×1.5).
+  a 12 m+ throw is a LONG CAST (×1.5). Each buoy scores once a trip (a line dropped back over the
+  rail and hooked again scores nothing), EVERY BUOY needs five different buoys, and only a real throw
+  is graded (a grapple that slides overboard is nobody's). LIFELINE needs a ring the player just threw.
 - **Rougher season** (`game/progress.ts`): trip n is fished at tier `[0,1,2,2,3,3,4,4,4,4][n−1]`,
   written into `config` before the trip. Tier 2 is exactly the old config. Tier 0 is gentler (2 storm
   sets, a 6° window) and tier 4 is a real storm (3.0 m storm sets, 4 of them, a 4° window). Floors:
@@ -270,16 +275,28 @@ every gold target sits inside the old forgiving window.
 - **Today's Tide:** the day's seed is `FNV-1a("potluck:" + YYYY-MM-DD)`, so every trip that day
   fishes the same water. One of seven flavours (Glassy Morning … Big Swell 🌶, Frost Smoke 🌶) is
   picked per day and never repeats the day before; never on the tutorial trip. The chart shows the
-  tide, Mo's word on it, the sea's tier, today's best and your bests.
+  tide, Mo's word on it, the sea's tier, today's best and your bests. The date is captured once at
+  boot (`config.progress.dateKey`), so a trip that runs past midnight counts for the day it fished.
 - **Deckhand's Log** (`ui/log.ts`): an end-of-trip card before the fish buyer with a rank stamp
   (Greenhorn … Old Salt), pip rows per skill, the longest streak, NEW BEST ribbons, one tip and the
-  bloopers. Save v2 adds `mastery`, `tides` (14 dates), `daysAtSea` and `lastDay`; v1 saves migrate.
-- **Pass test** (`scripts/probe-score.js`, 42 checks): dibs (no claim for 6 s, then a bot lands it;
-  5 m away it claims at once), landing grades and the 80 ms grace, Mo's steady hand and the HUD width,
-  brace PERFECT/GOOD/SAFE/CLUTCH, streak maths and untie rules (tier 0 lenient, bots never break it),
-  the sorting chain and Clean Table, the Show scores and reduce-flashing settings, the tier snapshot,
-  tides on 800 days, history/tide caps, and a v1 save booted in a frame through the Log, the fish
-  buyer and the galley. `probe-m7` (tier 2) still lands 10/10; tiers 0 and 4 also finish the trip.
+  bloopers. The save gains `mastery`, `tides` (14 dates), `daysAtSea` and `lastDay`; older saves
+  migrate. It is still written as `version: 1` (the fields are additive), because an older cached
+  build only loads version 1 and would otherwise overwrite the save, photos and all. 2 is read too.
+- **HUD layout:** on narrow screens the rope strip stacks under the trip line and Hud measures the
+  panel (a ResizeObserver, no per-frame layout reads) into `--trip-bottom`, which keeps the second row
+  (objective, wave ring, toast) below it. A wide objective that would meet the panel drops below it.
+  Grade pops keep clear of the wave ring, the spirit level, the trip panel, the objective and each
+  other. The gold targets go to the frame's own `setLevel` / `setWave` via `hud.setGoldTargets`.
+- **Pass test** (`scripts/probe-score.js`, 56 checks): dibs (no claim for 6 s, then a bot lands it;
+  5 m away it claims at once and lands from the spot itself; an idle player or one at the sorting
+  table is not waited on), landing grades and the 80 ms grace, Mo's steady hand and the HUD width,
+  brace PERFECT/GOOD/SAFE/CLUTCH graded at resolve (a grip that breaks first gets nothing), streak
+  maths and untie rules (tier 0 lenient, bots never break it), the sorting chain, its cap and Clean
+  Table, each buoy hooked once and only real throws graded, LIFELINE only for a fresh throw, the rope
+  strip text, the Show scores and reduce-flashing settings, the tier snapshot, tides on 800 days and
+  `?tide` on a fresh save, the trip's date fixed at boot, the idle player's tip, one ScoreKeeper on
+  the bus, history/tide caps, and a v1 save booted in a frame through the Log (Enter carries on), the
+  fish buyer and the galley. `probe-m7` (tier 2) still lands 10/10; tiers 0 and 4 also finish the trip.
 
 ---
 

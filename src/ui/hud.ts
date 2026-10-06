@@ -28,6 +28,10 @@ interface Pop {
 const MAX_GRADE_POPS = 2;
 const WAVE_R = 42;
 const GOLD_R = 49;
+/** the wave ring's largest scale (the urgent pulse): grade pops keep clear of it at full size */
+const WAVE_MAX_SCALE = 1.09;
+/** the trip panel's bounce (.hud-trip.bump) */
+const BUMP = 1.12;
 
 const _v = new THREE.Vector3();
 
@@ -50,6 +54,10 @@ export class Hud {
   /** the last gold targets given (a caller that doesn't pass them gets these) */
   private perfectSec = 1.2;
   private coreDeg = 0;
+  /** Mo's steady hand: widens whatever window the frame passes to setLevel (see setGoldTargets) */
+  private winBonusDeg = 0;
+  /** what setLevel last wrote (unchanged values aren't written again) */
+  private levelShown = { on: false, x: NaN, win: NaN, core: NaN, good: false, gold: false };
   private waveLabel: HTMLDivElement;
   private waveSide: HTMLDivElement;
   private radioEl: HTMLDivElement;
@@ -75,6 +83,20 @@ export class Hud {
   private scoreKey = '';
   private scoreBump = 0;
   private toastAt = -1e9;
+  /** the trip panel's layout box changed (content, a late font, resize): measure it once, before the next pop writes */
+  private tripDirty = true;
+  /** x1: right edge · bottom: where the second row may start (both with room for the panel's bounce) */
+  private tripBox = { x0: 0, x1: 0, bottom: 0 };
+  private objectiveEl: HTMLElement | null = null;
+  private objectiveDirty = true;
+  /** bumped whenever a box the grade pops avoid may have moved (size observers, resize) */
+  private layoutGen = 0;
+  private sizeObs: ResizeObserver | null = null;
+  private frames = 0;
+  /** grade pops keep clear of these (cached; re-measured only when what they depend on changes) */
+  private popBoxes: Box[] = [];
+  private popBoxKey = '';
+  private placed: Box[] = [0, 1, 2, 3].map(() => ({ x0: 0, y0: 0, x1: 0, y1: 0 }));
   private bigEl: HTMLDivElement;
   private bigTimer = 0;
   private _reduceFlashing = false;
@@ -135,6 +157,28 @@ export class Hud {
     const circ = 2 * Math.PI * 42;
     this.waveArc.style.strokeDasharray = `${circ}`;
     this.waveArc.style.strokeDashoffset = `${circ}`;
+    // sizes change for reasons the HUD can't see (an emoji font arriving late, the objective's text):
+    // a ResizeObserver says so after layout, without forcing one
+    const changed = () => {
+      this.tripDirty = this.objectiveDirty = true;
+      this.layoutGen++;
+    };
+    window.addEventListener('resize', changed);
+    if (typeof ResizeObserver !== 'undefined') {
+      this.sizeObs = new ResizeObserver(changed);
+      this.sizeObs.observe(this.tripEl);
+    }
+  }
+
+  /**
+   * The scoring layer's gold targets, set once a frame: the steady-hand widening of the level window
+   * (the HUD green then matches what the landing judge uses), the gold core and the PERFECT brace time.
+   * The frame's own setLevel / setWave calls pick these up, so nothing is written twice.
+   */
+  setGoldTargets(winBonusDeg: number, coreDeg: number, perfectSec: number): void {
+    this.winBonusDeg = winBonusDeg;
+    this.coreDeg = coreDeg;
+    this.perfectSec = perfectSec;
   }
 
   /** Wave warning ring: fill 0..1 toward impact. perfectSec: the gold arc at the end of the ring (brace in it for PERFECT). */
@@ -234,7 +278,10 @@ export class Hud {
   }
 
   setTrip(html: string): void {
-    if (this.tripMain.innerHTML !== html) this.tripMain.innerHTML = html;
+    if (this.tripMain.innerHTML !== html) {
+      this.tripMain.innerHTML = html;
+      this.tripDirty = true; // re-measured this frame (the size observer would only say so next frame)
+    }
     this.tripEl.classList.toggle('blank', !html && this.scoreEl.classList.contains('off'));
   }
 
@@ -246,6 +293,7 @@ export class Hud {
     const key = `${score}|${mult}|${knots}|${show}`;
     if (key === this.scoreKey) return;
     this.scoreKey = key;
+    this.tripDirty = true;
     const on = score > 0 || knots > 0;
     this.scoreEl.classList.toggle('off', !on);
     this.tripEl.classList.toggle('blank', !on && !this.tripMain.innerHTML);
@@ -255,8 +303,10 @@ export class Hud {
       const f = Math.max(0, Math.min(3, knots - i * 3));
       rope += `<i class="knot k${f}"></i>`;
     }
-    const nums = show ? `<span class="hud-score-num">⚓ ${Math.round(score).toLocaleString('en-US')}</span>${mult > 1 ? ` <span class="hud-score-mult">×${mult.toFixed(2).replace(/0$/, '')}</span>` : ''}` : '<span class="hud-score-num">⚓</span>';
-    this.scoreEl.innerHTML = `${nums}<span class="hud-score-rope">${rope}</span>`;
+    // the separator travels with the multiplier, so a wrap never leaves a dangling "·"
+    const multTxt = mult > 1 ? ` <span class="hud-score-mult"><i class="hud-score-sep">·</i> ×${+mult.toFixed(2)}</span>` : '';
+    const nums = show ? `<span class="hud-score-num">⚓ ${Math.round(score).toLocaleString('en-US')}</span>${multTxt}` : '<span class="hud-score-num">⚓</span>';
+    this.scoreEl.innerHTML = `<span class="hud-score-line">${nums}</span><span class="hud-score-rope">${rope}</span>`;
   }
 
   /** The trip panel bounces when points land (the score glows gold for a moment). */
@@ -301,17 +351,24 @@ export class Hud {
     for (const c of Array.from(this.portraitsEl.children)) (c as HTMLDivElement).classList.toggle('sel', (c as HTMLDivElement).dataset.id === id);
   }
 
-  /** Spirit level (shown while landing a pot). angleDeg: current roll; window ±win; core ±core (the gold "dead level" band). */
+  /**
+   * Spirit level (shown while landing a pot). angleDeg: current roll; window ±win (plus Mo's steady-hand
+   * bonus from setGoldTargets); core ±core (the gold "dead level" band). Only changed values are written.
+   */
   setLevel(show: boolean, angleDeg = 0, win = 4, core = this.coreDeg): void {
     this.coreDeg = core;
-    this.levelEl.classList.toggle('on', show);
+    const s = this.levelShown;
+    if (show !== s.on) this.levelEl.classList.toggle('on', (s.on = show));
     if (!show) return;
-    const x = Math.max(-1, Math.min(1, angleDeg / 15));
-    this.levelBubble.style.left = `${50 + x * 45}%`;
-    this.levelWin.style.width = `${(win / 15) * 90}%`;
-    this.levelCore.style.width = `${(core / 15) * 90}%`;
-    this.levelEl.classList.toggle('good', Math.abs(angleDeg) < win);
-    this.levelBubble.classList.toggle('gold', core > 0 && Math.abs(angleDeg) <= core);
+    const w = win + this.winBonusDeg;
+    const x = Math.round(Math.max(-1, Math.min(1, angleDeg / 15)) * 4500) / 4500;
+    if (x !== s.x) this.levelBubble.style.left = `${50 + (s.x = x) * 45}%`;
+    if (w !== s.win) this.levelWin.style.width = `${((s.win = w) / 15) * 90}%`;
+    if (core !== s.core) this.levelCore.style.width = `${((s.core = core) / 15) * 90}%`;
+    const good = Math.abs(angleDeg) < w;
+    if (good !== s.good) this.levelEl.classList.toggle('good', (s.good = good));
+    const gold = core > 0 && Math.abs(angleDeg) <= core;
+    if (gold !== s.gold) this.levelBubble.classList.toggle('gold', (s.gold = gold));
   }
 
   setIndicators(list: Indicator[], camera: THREE.Camera): void {
@@ -450,26 +507,108 @@ export class Hud {
     return out;
   }
 
-  /** The wave ring (with its labels) and the spirit level, while they show. */
+  /**
+   * The trip panel's layout box (transforms ignored, so a bump doesn't count), measured once per change.
+   * It sets --trip-bottom, which keeps the second row (objective, wave ring, toast) below the panel on
+   * narrow screens however tall the rope strip makes it; and when the centred objective pill would run
+   * into the panel on a wider screen, the pill drops below it too.
+   */
+  private measureTrip(): void {
+    this.tripDirty = false;
+    const el = this.tripEl;
+    const shown = el.offsetHeight > 0;
+    // room for the panel's bounce too (scale 1.12 from its top-left corner, so it grows right and
+    // down): nothing beside or below it is ever covered, even mid-bounce
+    const b = { x0: shown ? el.offsetLeft : 0, x1: shown ? el.offsetLeft + Math.ceil(el.offsetWidth * BUMP) : 0, bottom: shown ? el.offsetTop + Math.ceil(el.offsetHeight * BUMP) + 3 : 0 };
+    if (b.bottom !== this.tripBox.bottom) document.documentElement.style.setProperty('--trip-bottom', `${b.bottom}px`);
+    if (b.x0 !== this.tripBox.x0 || b.x1 !== this.tripBox.x1 || b.bottom !== this.tripBox.bottom) {
+      this.tripBox = b;
+      this.objectiveDirty = true; // re-check the pill against the new panel
+      this.layoutGen++;
+    }
+  }
+
+  /** The objective pill (trip.ts owns it) changed size or the panel moved: drop it below the panel if they'd meet. */
+  private placeObjective(): void {
+    let ob = this.objectiveEl;
+    if (!ob) {
+      // trip.ts makes it after the HUD: pick it up once it exists (the first frame, in practice)
+      ob = this.objectiveEl = document.querySelector<HTMLElement>('.objective');
+      if (!ob) return;
+      this.sizeObs?.observe(ob);
+      this.objectiveDirty = true;
+    }
+    if (!this.objectiveDirty) return;
+    this.objectiveDirty = false;
+    const t = this.tripBox;
+    const on = ob.offsetHeight > 0 && t.bottom > 0;
+    // horizontal extents only: dropping it below doesn't change them, so this never flip-flops
+    const clash = on && ob.offsetLeft < t.x1 + 4 && ob.offsetLeft + ob.offsetWidth > t.x0 - 4;
+    if (clash !== ob.classList.contains('below-trip')) {
+      ob.classList.toggle('below-trip', clash);
+      this.layoutGen++;
+    }
+  }
+
+  /** The wave ring (with its labels), the spirit level, the trip panel and the objective pill, while they show. */
   private popAvoidBoxes(): Box[] {
+    const waveOn = this.waveEl.classList.contains('on');
+    const levelOn = this.levelEl.classList.contains('on');
+    const ob = this.objectiveEl;
+    const obOn = !!ob && ob.style.display !== 'none' && ob.style.display !== '';
+    // everything these boxes depend on, read without forcing a layout (and twice a second anyway: the
+    // spirit level sits in the bottom stack, which moves with the prompt below it)
+    const key = `${waveOn ? this.waveLabel.textContent : '-'}|${levelOn}|${obOn}|${this.layoutGen}|${Math.floor(this.frames / 30)}`;
+    if (key === this.popBoxKey) return this.popBoxes;
+    this.popBoxKey = key;
     const out: Box[] = [];
-    const add = (el: Element) => {
-      const r = el.getBoundingClientRect();
+    const add = (r: DOMRect | { left: number; top: number; right: number; bottom: number; width: number; height: number }) => {
       if (r.width > 1 && r.height > 1) out.push({ x0: r.left - 4, y0: r.top - 4, x1: r.right + 4, y1: r.bottom + 4 });
     };
-    if (this.waveEl.classList.contains('on')) {
-      add(this.waveEl);
-      add(this.waveSide);
-      add(this.waveLabel);
-      // one box for the ring and its labels
-      const n = out.length;
-      if (n >= 2) {
-        const u = out.splice(0, n).reduce((a, b) => ({ x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) }));
-        out.push(u);
-      }
+    if (waveOn) {
+      // one box for the ring and its labels, at the ring's largest size (it scales in and pulses)
+      const rs = [this.waveEl, this.waveSide, this.waveLabel].map((e) => e.getBoundingClientRect());
+      const r = rs[0];
+      const k = WAVE_MAX_SCALE / Math.max(0.5, r.width / Math.max(1, this.waveEl.offsetWidth));
+      const cx = r.left + r.width / 2,
+        cy = r.top + r.height / 2;
+      const x0 = Math.min(...rs.map((q) => q.left)),
+        y0 = Math.min(...rs.map((q) => q.top)),
+        x1 = Math.max(...rs.map((q) => q.right)),
+        y1 = Math.max(...rs.map((q) => q.bottom));
+      const u = { left: cx + (x0 - cx) * k, top: cy + (y0 - cy) * k, right: cx + (x1 - cx) * k, bottom: cy + (y1 - cy) * k, width: 0, height: 0 };
+      u.width = u.right - u.left;
+      u.height = u.bottom - u.top;
+      add(u);
     }
-    if (this.levelEl.classList.contains('on')) add(this.levelEl);
+    if (levelOn) add(this.levelEl.getBoundingClientRect());
+    if (this.tripBox.bottom > 0) add({ left: this.tripBox.x0, top: 0, right: this.tripBox.x1, bottom: this.tripBox.bottom - 3, width: this.tripBox.x1 - this.tripBox.x0, height: 1e3 });
+    if (obOn) add(ob!.getBoundingClientRect());
+    this.popBoxes = out;
     return out;
+  }
+
+  /** Slide a grade pop up or down off the HUD's boxes and the grade pops already placed this frame. */
+  private clearPop(x: number, y: number, hw: number, hh: number, avoid: Box[], placed: Box[], n: number, h: number): number {
+    for (let pass = 0; pass < 4; pass++) {
+      let moved = false;
+      for (const b of avoid) {
+        if (!overlaps(x, y, hw, hh, b)) continue;
+        // boxes in the top half push it down, the spirit level (bottom) pushes it up
+        y = (b.y0 + b.y1) / 2 < h / 2 ? b.y1 + hh : b.y0 - hh;
+        moved = true;
+      }
+      for (let i = 0; i < n; i++) {
+        const b = placed[i];
+        if (!overlaps(x, y, hw, hh, b)) continue;
+        // stack away from the HUD on that side (down from the top row, up from the spirit level), so
+        // the two rules never push it back and forth
+        y = y < h / 2 ? b.y1 + hh + 2 : b.y0 - hh - 2;
+        moved = true;
+      }
+      if (!moved) break;
+    }
+    return Math.max(hh + 4, Math.min(h - hh - 4, y));
   }
 
   update(dt: number, camera: THREE.Camera, boatMatrix: THREE.Matrix4): void {
@@ -495,7 +634,14 @@ export class Hud {
     }
     const w = window.innerWidth,
       h = window.innerHeight;
-    let avoid: Box[] | null = null;
+    // layout reads first, before this frame's pop writes (and only when something they depend on changed;
+    // without a ResizeObserver, once a second)
+    this.frames++;
+    if (!this.sizeObs && this.frames % 60 === 0) this.tripDirty = this.objectiveDirty = true;
+    if (this.tripDirty) this.measureTrip();
+    this.placeObjective();
+    const avoid = this.pops.some((p) => p.grade) ? this.popAvoidBoxes() : null;
+    let nPlaced = 0;
     for (let i = this.pops.length - 1; i >= 0; i--) {
       const p = this.pops[i];
       p.t += dt;
@@ -513,13 +659,20 @@ export class Hud {
       const k = p.t / p.life;
       let x = (_v.x * 0.5 + 0.5) * w;
       let y = (-_v.y * 0.5 + 0.5) * h - 30 - k * 36;
-      if (p.grade) {
-        // a grade pop stays on screen and never sits on the wave ring or the spirit level
+      if (p.grade && avoid) {
+        // a grade pop stays on screen and never sits on the wave ring, the spirit level, the trip panel,
+        // the objective, or the other grade pop
         const hw = (p.w ?? 0) / 2 + 4,
           hh = (p.h ?? 0) / 2 + 2;
         x = Math.max(hw + 6, Math.min(w - hw - 6, x));
-        avoid ??= this.popAvoidBoxes();
-        for (const b of avoid) if (overlaps(x, y, hw, hh, b)) y = (b.y0 + b.y1) / 2 < h / 2 ? b.y1 + hh : b.y0 - hh;
+        y = this.clearPop(x, y, hw, hh, avoid, this.placed, nPlaced, h);
+        if (nPlaced < this.placed.length) {
+          const b = this.placed[nPlaced++];
+          b.x0 = x - hw;
+          b.x1 = x + hw;
+          b.y0 = y - hh;
+          b.y1 = y + hh;
+        }
       }
       p.el.style.left = `${x}px`;
       p.el.style.top = `${y}px`;

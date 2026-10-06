@@ -33,9 +33,13 @@ export const defaultSettings: Settings = {
 type Listener = (s: Settings) => void;
 const listeners: Listener[] = [];
 
-/** Be told whenever settings are saved (the menu saves on every change). */
-export function onSettingsChange(fn: Listener): void {
+/** Be told whenever settings are saved (the menu saves on every change). Returns the unsubscribe. */
+export function onSettingsChange(fn: Listener): () => void {
   listeners.push(fn);
+  return () => {
+    const i = listeners.indexOf(fn);
+    if (i >= 0) listeners.splice(i, 1);
+  };
 }
 
 export function loadSettings(): Settings {

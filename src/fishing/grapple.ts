@@ -35,6 +35,8 @@ export class GrappleSystem {
   /** where the thrower actually aimed (world, before the aim assist) and how far the nearest buoy was */
   private rawAim: THREE.Vector3 | null = null;
   private throwDist = 0;
+  /** a real throw is in the air: only that landing is graded (a grapple that slid overboard isn't anyone's throw) */
+  private pendingGrade = false;
 
   constructor(private ctx: Ctx) {
     ctx.sys.grapple = this;
@@ -60,6 +62,7 @@ export class GrappleSystem {
     this.hooked = null;
     this.reel = 0;
     this.lastResult = null;
+    this.pendingGrade = true;
     this.rawAim = raw ? this.ctx.boat.localToWorld(raw.clone(), new THREE.Vector3()) : null;
     // the throw's length: thrower to the nearest buoy out there (a Long Cast is 12 m+)
     const me = this.ctx.boat.localToWorld(crew.pos(new THREE.Vector3()), new THREE.Vector3());
@@ -81,7 +84,9 @@ export class GrappleSystem {
       }
     }
     // grade the throw on the raw aim (the assist and the hook radius forgive; the grade doesn't)
-    if (this.thrower) {
+    const thrown = this.pendingGrade && this.ctx.time - this.lastThrowAt < 6;
+    this.pendingGrade = false;
+    if (this.thrower && thrown) {
       let near: Pot | null = best;
       if (!near) {
         let nd = Infinity;
@@ -95,7 +100,7 @@ export class GrappleSystem {
       }
       const aim = this.rawAim ?? g.wp;
       const rawErr = near ? Math.hypot(near.buoy!.wp.x - aim.x, near.buoy!.wp.z - aim.z) : 99;
-      events.emit('hooked', { by: this.thrower.id, rawErr, dist: this.throwDist, hit: !!best && !this.pots.blockPot, stringNo: best?.stringNo });
+      events.emit('hooked', { by: this.thrower.id, rawErr, dist: this.throwDist, hit: !!best && !this.pots.blockPot, stringNo: best?.stringNo, pot: best?.number });
     }
     if (best && !this.pots.blockPot) {
       this.hooked = best;
@@ -144,7 +149,12 @@ export class GrappleSystem {
     const c = this.thrower;
     const g = this.grapple;
     this.home_();
-    if (!c || !c.isUp) return;
+    if (!c || !c.isUp) {
+      // nobody to hand it to (the thrower is down): forget them, so a later slide overboard isn't their throw
+      this.thrower = null;
+      this.hooked = null;
+      return;
+    }
     if (this.hooked) {
       const pot = this.hooked;
       // hand the line to the thrower (a coil with the buoy on it)

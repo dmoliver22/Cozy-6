@@ -12,8 +12,10 @@ async function boot() {
   if (physics === 'js') console.info('Pot Luck: WebAssembly is blocked here, running the JavaScript build of the physics engine (slower).');
   (window as unknown as { __physics: string }).__physics = physics;
   const app = document.getElementById('app')!;
-  // Today's Tide: everyone fishing today fishes the same water (the probes keep the fixed seed)
-  if (params.seed === undefined && params.autostart !== '1') config.seed = progress.dailySeed();
+  // Today's Tide: everyone fishing today fishes the same water (the probes keep the fixed seed).
+  // The date is fixed here for the whole trip (a trip past midnight still counts for today).
+  const day = progress.tripDateKey();
+  if (params.seed === undefined && params.autostart !== '1') config.seed = progress.dailySeed(day);
   const game = new Game(app);
   (window as unknown as { __game: Game; __params: unknown }).__game = game;
   (window as unknown as { __params: unknown }).__params = params;

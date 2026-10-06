@@ -22,6 +22,8 @@ const GRADE_CLASS: Record<string, string> = { perfect: 'perfect', ringer: 'perfe
 export class Feedback {
   private slowmoLeft = 0;
   private offs: (() => void)[] = [];
+  /** the one Feedback listening on the (global) event bus: a second Game must not pop everything twice */
+  private static live: Feedback | null = null;
   /** the Show scores setting: off keeps the words and hides the numbers */
   showScores = loadSettings().showScores;
 
@@ -32,8 +34,10 @@ export class Feedback {
     private crew: CrewManager,
     private loop: FixedLoop,
   ) {
+    Feedback.live?.dispose();
+    Feedback.live = this;
     const on = <K extends Parameters<typeof events.on>[0]>(k: K, f: Parameters<typeof events.on<K>>[1]) => this.offs.push(events.on(k, f));
-    onSettingsChange((s) => (this.showScores = s.showScores));
+    this.offs.push(onSettingsChange((s) => (this.showScores = s.showScores)));
 
     on('radio', ({ who, text, urgent }) => {
       const secs = Math.max(2.5, sfx.babble(text, { radio: true, pitch: who === 'Mo' ? 0.75 : 1.1 }) + 1.2);
@@ -98,12 +102,13 @@ export class Feedback {
         const text = this.showScores && e.points > 0 ? `${e.label} +${e.points.toLocaleString('en-US')}` : e.label;
         hud.pop(text, e.localPos, cls, cls === 'perfect' ? 1.6 : 1.4, true);
       }
-      if (cls === 'perfect') haptics.buzz([12, 30, 12]);
+      // the PERFECT haptic; on the sorting ladder only the step that first turns the chain gold (or a golden crab)
+      if (cls === 'perfect' && (e.moment !== 'sort' || e.label.startsWith('GOLDEN') || (e.chainUp && e.chain === 6))) haptics.buzz([12, 30, 12]);
       if (e.moment === 'sort') {
-        // an audible ladder up the chain
+        // an audible ladder up the chain; a chime when it grows to 5 and to 8 (not on every sort at the cap)
         const k = e.chain ?? 1;
         sfx.play('plus', { pitch: 1 + 0.07 * k, volume: 0.55 });
-        if (k === 5 || k === 8) sfx.play('chime', { volume: 0.45, delay: 0.05 });
+        if (e.chainUp && (k === 5 || k === 8)) sfx.play('chime', { volume: 0.45, delay: 0.05 });
       } else if (e.points > 0) sfx.play('plus', { pitch: 1 + 0.05 * Math.min(e.knots, 14), volume: 0.6, delay: 0.05 });
       if (e.grade === 'clutch') this.slowmo(0.2, 0.5);
       if (e.big && !(e.bigMinor && hud.bigBusy)) {
@@ -121,6 +126,12 @@ export class Feedback {
       hud.big('GOLDEN!');
       haptics.buzz([20, 30, 20, 30, 60]);
     });
+  }
+
+  dispose(): void {
+    for (const off of this.offs) off();
+    this.offs.length = 0;
+    if (Feedback.live === this) Feedback.live = null;
   }
 
   /** Slow motion. Two that overlap keep the longer and the slower (a CLUTCH never cuts ALL HELD short). */

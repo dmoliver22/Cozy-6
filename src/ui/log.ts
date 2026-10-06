@@ -78,18 +78,44 @@ export function showLog(parent: HTMLElement, v: LogView, onContinue: () => void)
     sfx.play('thunk', { volume: 0.8, pitch: 1.1 });
   }, 400);
   let done = false;
+  // keyboard and pad players: Enter anywhere carries on (and the button has focus for Enter / Space)
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Enter' || e.code === 'NumpadEnter') {
+      e.preventDefault();
+      go();
+    }
+  };
   const go = () => {
     if (done) return;
     done = true;
+    window.removeEventListener('keydown', onKey);
     sfx.play('uiConfirm');
     el.classList.add('out');
     window.setTimeout(() => el.remove(), 700);
     onContinue();
   };
-  el.querySelector('[data-go]')!.addEventListener('click', go);
-  el.addEventListener('keydown', (e) => {
-    if ((e as KeyboardEvent).key === 'Enter') go();
-  });
+  const btn = el.querySelector<HTMLButtonElement>('[data-go]')!;
+  btn.addEventListener('click', go);
+  window.addEventListener('keydown', onKey);
+  // a pad's A (or Start) carries on too: a fresh press, not the one still held from the trip
+  const wasDown = new Set<string>();
+  const pads = () => (navigator.getGamepads ? Array.from(navigator.getGamepads()).filter((p): p is Gamepad => !!p) : []);
+  for (const p of pads()) for (const b of [0, 9]) if (p.buttons[b]?.pressed) wasDown.add(`${p.index}:${b}`);
+  const poll = () => {
+    if (done) return;
+    for (const p of pads())
+      for (const b of [0, 9]) {
+        const k = `${p.index}:${b}`;
+        if (p.buttons[b]?.pressed) {
+          if (!wasDown.has(k)) return go();
+        } else wasDown.delete(k);
+      }
+    requestAnimationFrame(poll);
+  };
+  requestAnimationFrame(poll);
+  // first person holds the mouse captive: let it go so the card can be clicked
+  if (document.pointerLockElement) document.exitPointerLock();
+  btn.focus({ preventScroll: true });
   el.addEventListener('pointerdown', (e) => e.stopPropagation());
   el.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
   return el;

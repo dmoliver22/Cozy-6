@@ -23,6 +23,9 @@ import { sfx } from '../audio';
 type Status = 'run' | 'done' | 'fail';
 /** how long a bot leaves a moment to a player who is lining it up */
 const DIBS_SEC = 6;
+/** no input for this long and the player counts as idle (AFK, parked): never waited on.
+ *  Long enough to cover standing at the cradle while a pot comes up from 9 m (about 8.5 s). */
+const IDLE_SEC = 15;
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 
@@ -330,10 +333,15 @@ export class BotBrain {
     return best < 0 ? null : { zone: best, level };
   }
 
-  /** The player is up, hands empty and within r of a spot: they're lining something up. */
+  /** The player is playing (any input in the last IDLE_SEC): an idle or parked player is never waited on. */
+  playerActive(): boolean {
+    return this.ctx.time - this.player.lastActiveAt <= IDLE_SEC;
+  }
+
+  /** The player is up, playing, hands empty and within r of a spot: they're lining something up. */
   playerNear(spot: THREE.Vector3, r: number): boolean {
     const p = this.player;
-    if (!p.isUp || p.held || p.inSea) return false;
+    if (!p.isUp || p.held || p.inSea || !this.playerActive()) return false;
     const me = p.pos(_v2);
     return Math.hypot(me.x - spot.x, me.z - spot.z) <= r;
   }
@@ -345,9 +353,18 @@ export class BotBrain {
     return now - pot[key]! < DIBS_SEC;
   }
 
-  /** The player wants to land this hanging pot themselves (standing by the cradle, hands free). */
+  /** The player wants to land this hanging pot themselves (by the cradle, hands free, not working the table). */
   playerHasLandDibs(pot: Pot): boolean {
-    return this.playerNear(L.launcherSpot, 3.5) && this.dibsOpen(pot, 'dibsSince');
+    if (!this.playerNear(L.launcherSpot, 3.5)) return false;
+    // sorting between crabs (nearer the table than the launcher) isn't lining up a landing
+    const me = this.player.pos(_v2);
+    if (Math.hypot(me.x - L.tableSpot.x, me.z - L.tableSpot.z) < Math.hypot(me.x - L.launcherSpot.x, me.z - L.launcherSpot.z)) return false;
+    return this.dibsOpen(pot, 'dibsSince');
+  }
+
+  /** Someone else is standing on a spot (a bot can't get onto it, so close enough has to do). */
+  spotTaken(spot: THREE.Vector3, r = 0.8): boolean {
+    return this.crewMgr.list.some((o) => o !== this.crew && o.isUp && Math.hypot(o.pos(_v2).x - spot.x, _v2.z - spot.z) < r);
   }
 
   private playerDoing(verbId: string): boolean {
@@ -424,7 +441,7 @@ export class BotBrain {
     let bd = Infinity;
     // don't snatch the crab the player is reaching for
     const pl = this.player;
-    const reach = pl.isUp && !pl.held ? pl.pos(new THREE.Vector3()) : null;
+    const reach = pl.isUp && !pl.held && this.playerActive() ? pl.pos(new THREE.Vector3()) : null;
     for (const it of crabs.crabs as Item[]) {
       if (it.mode !== 'deck' || it.heldBy) continue;
       if (reach && it.localPos(_v2).distanceTo(_v.set(reach.x, _v2.y, reach.z)) < 0.8) {
@@ -643,9 +660,9 @@ class LandTask extends Task {
     if (it.heldBy && it.heldBy !== (b.crew as unknown)) return 'fail';
     // the player walked up to land it themselves: step aside (dibs, capped per pot)
     if (it.heldBy !== (b.crew as unknown) && b.playerHasLandDibs(pot)) return 'done';
-    // the spot can be taken (the player standing at the launcher): the pot within reach is enough
+    // only when someone is standing on the spot (the player at the launcher): the pot within reach is enough
     const ia = b.ctx.interact.byId(it.data.iaId);
-    const near = b.pos().distanceTo(L.launcherSpot) < 1.6 && !!ia && b.crew.inReach(ia, b.pos());
+    const near = b.spotTaken(L.launcherSpot) && b.pos().distanceTo(L.launcherSpot) < 1.6 && !!ia && b.crew.inReach(ia, b.pos());
     if (!b.goTo(L.launcherSpot, 0.5) && !near) return 'run';
     b.holdUse(it.data.iaId);
     // wait until it swings over the cradle while the deck is level, then let go

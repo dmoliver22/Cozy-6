@@ -45,6 +45,13 @@ export interface SaveData {
 }
 
 const KEY = 'potluck.save.v1';
+/**
+ * The version written to disk stays 1. The Good Hands fields (mastery, tides, daysAtSea, lastDay) are
+ * purely additive and migrate() fills them in from any shape, while an older cached build only loads
+ * version 1: it would treat a version-2 save as missing and overwrite it, photos and coins included.
+ * Version 2 is still accepted on read.
+ */
+const DISK_VERSION = 1;
 /** window.name survives a reload of the same frame: the fallback when localStorage is unavailable */
 const WN = 'potluck.save:';
 
@@ -54,7 +61,7 @@ export function defaultMastery(): Mastery {
 
 export function defaultSave(): SaveData {
   return {
-    version: 2,
+    version: DISK_VERSION,
     tripsCompleted: 0,
     coins: 0,
     upgrades: [],
@@ -70,7 +77,7 @@ export function defaultSave(): SaveData {
   };
 }
 
-/** v1 saves load with the new fields zeroed and are written back as v2. */
+/** Older saves load with the new fields zeroed (and are written back with them, still as version 1). */
 function migrate(d: any): SaveData {
   const def = defaultSave();
   const m = d.mastery && typeof d.mastery === 'object' ? d.mastery : {};
@@ -82,7 +89,7 @@ function migrate(d: any): SaveData {
     tides: d.tides && typeof d.tides === 'object' ? d.tides : {},
     daysAtSea: Number(d.daysAtSea) || 0,
     lastDay: typeof d.lastDay === 'string' ? d.lastDay : null,
-    version: 2,
+    version: DISK_VERSION,
   };
 }
 

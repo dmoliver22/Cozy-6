@@ -626,7 +626,7 @@ export class Game {
     }
     const hang = this.pots.hangingPot;
     this.hud.setLevel(!!hang, this.pots.deckLevelDeg(), config.fishing.levelWindowDeg);
-    this.updateScoreHud(player);
+    this.updateScoreHud(player, ws);
     this.hud.setIndicators(inds, this.stage.camera);
     this.hud.update(dtReal, this.stage.camera, this.boatGroup.matrixWorld);
     const statusIcon = (c: ReturnType<CrewManagerT['get']>) => {
@@ -663,15 +663,16 @@ export class Game {
     });
   }
 
-  /** Per-frame HUD for the scoring layer: the rope strip, the gold core and arc, the BRACE pulse, crab hints. */
-  private updateScoreHud(player: Crew): void {
+  /**
+   * Per-frame HUD for the scoring layer: the rope strip, the gold targets, the BRACE pulse, crab hints.
+   * The gold targets feed the frame's own setLevel / setWave (nothing is written twice): the HUD green is
+   * the landing judge's levelWindow() (Mo's steady hand included) and the core its levelCore().
+   */
+  private updateScoreHud(player: Crew, ws = this.rogue.hudState()): void {
     const sk = this.score;
     this.hud.setScore(sk.score, sk.mult, sk.knots, this.settings.showScores);
-    // the HUD level and the landing judge read the same numbers (Mo's steady hand included)
-    this.hud.setLevel(!!this.pots.hangingPot, this.pots.deckLevelDeg(), this.pots.levelWindow(), this.pots.levelCore());
-    const ws = this.rogue.hudState();
     const perfectSec = config.brace.perfectSec;
-    this.hud.setWave(ws, player.braced || player.crouch, perfectSec);
+    this.hud.setGoldTargets(this.pots.levelWindow() - config.fishing.levelWindowDeg, this.pots.levelCore(), perfectSec);
     this.touch.setBraceGold(!!ws && !player.braced && ws.secs > 0 && ws.secs <= perfectSec);
     // trips 1–2: the prompt's crab label is tinted keeper-green / throw-back-amber
     const crab = config.sort.hints && player.held?.kind === 'crab' ? player.held.data.crab : null;

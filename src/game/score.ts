@@ -108,19 +108,25 @@ export class ScoreKeeper {
   private readonly tipPips = new Map<number, Pip>();
   /** per string: pots the player landed GOOD+ (and whether anything spoiled it) */
   private readonly landStrings = new Map<number, { pots: Set<number>; spoiled: boolean }>();
-  private readonly hookStrings = new Map<number, { hooks: number; spoiled: boolean }>();
+  /** per string: buoys the player hooked (each counts once), and whether a miss or a bot spoiled it */
+  private readonly hookStrings = new Map<number, { pots: Set<number>; spoiled: boolean }>();
+  /** buoys already graded this trip: one dropped back over the rail and hooked again scores nothing */
+  private readonly hookedPots = new Set<number>();
   /** brace bookkeeping per rogue set (keyed by its impact time) */
   private braceGradedFor = NaN;
   private clutchFor = NaN;
   readonly tumbles: Record<string, number> = {};
   private offs: (() => void)[] = [];
+  /** the one keeper listening on the (global) event bus: a second Game must not score every moment twice */
+  private static live: ScoreKeeper | null = null;
 
   constructor(private ctx: Ctx) {
+    ScoreKeeper.live?.dispose();
+    ScoreKeeper.live = this;
     ctx.sys.score = this;
     const on = <K extends keyof GameEvents>(k: K, f: (e: GameEvents[K]) => void) => this.offs.push(events.on(k, f));
     on('potLanded', (e) => this.gradeLanding(e));
     on('braceStart', ({ crew }) => crew === 'player' && this.onPlayerBrace());
-    on('held', ({ crew }) => crew === 'player' && this.onPlayerHeld());
     on('rogueResolved', (e) => this.onResolved(e));
     on('potTipped', ({ spawned, tipId }) => {
       if (tipId === undefined) return;
@@ -132,8 +138,10 @@ export class ScoreKeeper {
     on('crabReleased', (e) => this.onSort(e, false));
     on('hooked', (e) => this.gradeHook(e));
     on('ringLanded', ({ hit }) => {
-      const ring = this.ctx.sys.rescue?.ring;
-      if (hit && ring?.data.lastBy === 'player') {
+      // only a ring the player actually threw just now: throwTo stamps lastHeldAt and the rescue
+      // system stamps thrownAt in the same tick (a ring dropped on deck and washed over doesn't count)
+      const d = this.ctx.sys.rescue?.ring?.data;
+      if (hit && d && d.lastBy === 'player' && d.thrownAt === d.lastHeldAt && this.ctx.time - d.thrownAt < 5) {
         this.counts.lifelines++;
         this.award('bonus', 'good', 150, 'LIFELINE!', this.playerHead(), true);
       }
@@ -153,6 +161,7 @@ export class ScoreKeeper {
   dispose(): void {
     for (const off of this.offs) off();
     this.offs.length = 0;
+    if (ScoreKeeper.live === this) ScoreKeeper.live = null;
   }
 
   // ------------------------------------------------------------------ the maths
@@ -168,7 +177,7 @@ export class ScoreKeeper {
   }
 
   /** Score a moment (the streak you've built multiplies it) and tie a knot if it earns one. */
-  award(moment: Moment, grade: string, base: number, label: string, localPos: THREE.Vector3, knot: boolean, extra: { chain?: number; big?: string; bigMinor?: boolean } = {}): number {
+  award(moment: Moment, grade: string, base: number, label: string, localPos: THREE.Vector3, knot: boolean, extra: { chain?: number; chainUp?: boolean; big?: string; bigMinor?: boolean } = {}): number {
     const mult = this.mult * this.weatherMult();
     const points = Math.round(base * mult);
     this.score += points;
@@ -252,16 +261,8 @@ export class ScoreKeeper {
     this.clutchFor = r.tImpact;
   }
 
-  /** The player's "Held!" moment (0.65 s after impact): grade the brace by how late it was. */
-  private onPlayerHeld(): void {
-    const r = this.ctx.sys.rogue?.current;
-    if (!r) return;
-    this.gradeBrace(r.tImpact, r.braceAge.get('player') ?? -1);
-  }
-
-  private gradeBrace(tImpact: number, age: number): void {
-    if (this.braceGradedFor === tImpact || age < 0) return;
-    this.braceGradedFor = tImpact;
+  /** A brace the player was holding at impact, graded by how late it was (only once they're still up at resolve). */
+  private gradeBrace(age: number): void {
     const c = this.counts;
     c.braceGraded++;
     const at = this.playerHead();
@@ -281,25 +282,28 @@ export class ScoreKeeper {
     }
   }
 
+  /**
+   * The set is over (1.6 s after impact): grade the player's brace. The grade waits for this moment
+   * because a grip can still break after the wash ("brace broke"), and the spec only grades a brace
+   * the player is still standing on at resolve.
+   */
   private onResolved(e: GameEvents['rogueResolved']): void {
     const t = e.tImpact;
     if (t === undefined || !e.atImpact?.includes('player')) return;
     const fell = e.fallen.includes('player');
     const age = e.braceAge?.player ?? -1;
     if (this.braceGradedFor !== t) {
+      this.braceGradedFor = t;
       if (age >= 0) {
-        // braced at impact but let go before the "Held!" moment: still graded if they stayed up;
         // braced and fell anyway is the sea winning one (no grade, no break)
-        if (!fell) this.gradeBrace(t, age);
+        if (!fell) this.gradeBrace(age);
       } else if (!fell && this.clutchFor === t) {
-        this.braceGradedFor = t;
         this.counts.braceGraded++;
         this.counts.clutches++;
         this.pip('brace', 'P');
         this.award('brace', 'clutch', 300, 'CLUTCH!', this.playerHead(), true);
       } else if (fell) {
         // unbraced and down: an amber pip (the knockdown already untied the streak)
-        this.braceGradedFor = t;
         this.counts.braceMiss++;
         this.pip('brace', 'M');
       }
@@ -318,7 +322,11 @@ export class ScoreKeeper {
       const c = this.counts;
       if (e.correct) {
         const now = this.ctx.time;
+        const prev = this.chain;
         this.chain = now - this.lastSortAt <= config.sort.chainSec ? Math.min(config.sort.chainCap, this.chain + 1) : 1;
+        // this sort added a link (a fresh chain or a longer one, not another sort at the cap): the chime
+        // and the gold haptic mark the chain reaching a milestone once, not every sort after it
+        const chainUp = this.chain === 1 || this.chain > prev;
         this.lastSortAt = now;
         c.sorts++;
         c.peakChain = Math.max(c.peakChain, this.chain);
@@ -328,7 +336,7 @@ export class ScoreKeeper {
         }
         const golden = kept && !!e.golden;
         const base = 10 * this.chain + (golden ? 250 : 0);
-        this.award('sort', this.chain >= 6 || golden ? 'perfect' : 'good', base, (golden ? 'GOLDEN ' : '') + `×${this.chain}`, TABLE, false, { chain: this.chain });
+        this.award('sort', this.chain >= 6 || golden ? 'perfect' : 'good', base, (golden ? 'GOLDEN ' : '') + `×${this.chain}`, TABLE, false, { chain: this.chain, chainUp });
       } else {
         // a wrong sort resets the chain (and, from trip 2, unties the streak); the "+1?" pop stays as it is
         this.chain = 0;
@@ -373,6 +381,11 @@ export class ScoreKeeper {
       return;
     }
     const c = this.counts;
+    if (e.hit && e.pot !== undefined) {
+      // a buoy already hooked this trip (its line went back over the rail): no grade, no pip, no knot
+      if (this.hookedPots.has(e.pot)) return;
+      this.hookedPots.add(e.pot);
+    }
     c.hookAttempts++;
     if (!e.hit) {
       // the toast already says it; an amber pip, no points, and the streak stays tied
@@ -388,9 +401,9 @@ export class ScoreKeeper {
     this.pip('hook', ringer ? 'P' : 'G');
     const label = (ringer ? 'RINGER!' : 'Hooked!') + (long ? ' · LONG CAST' : '');
     this.award('hook', ringer ? 'ringer' : 'good', (ringer ? 150 : 75) * (long ? 1.5 : 1), label, this.playerHead(), true);
-    if (str) {
-      str.hooks++;
-      if (!str.spoiled && str.hooks >= config.fishing.potsPerString) {
+    if (str && e.pot !== undefined) {
+      str.pots.add(e.pot);
+      if (!str.spoiled && str.pots.size >= config.fishing.potsPerString) {
         str.spoiled = true;
         c.cleanStrings++;
         this.award('bonus', 'perfect', 200, 'EVERY BUOY!', this.playerHead(), true, { big: 'EVERY BUOY!' });
@@ -398,9 +411,9 @@ export class ScoreKeeper {
     }
   }
 
-  private hookString(n: number): { hooks: number; spoiled: boolean } {
+  private hookString(n: number): { pots: Set<number>; spoiled: boolean } {
     let s = this.hookStrings.get(n);
-    if (!s) this.hookStrings.set(n, (s = { hooks: 0, spoiled: false }));
+    if (!s) this.hookStrings.set(n, (s = { pots: new Set(), spoiled: false }));
     return s;
   }
 
