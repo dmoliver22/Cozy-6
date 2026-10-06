@@ -3,6 +3,13 @@
  * for later trips: one fishing ground with an escalating forecast.
  */
 import { sfx, onAudioReady } from '../audio';
+import { UPGRADES } from '../harbor/market';
+
+/** "🔥 Deck heater lines" for an upgrade id (falls back to the id for anything unknown). */
+function upgradeName(id: string): string {
+  const u = UPGRADES.find((x) => x.id === id);
+  return u ? `${u.icon} ${u.name}` : id;
+}
 
 /** The foghorn on casting off: wait for the audio context to finish resuming (it can lag a frame). */
 function foghorn(): void {
@@ -49,7 +56,7 @@ export function showChart(parent: HTMLElement, trips: number, upgrades: string[]
       <div class="chart-title">Chart table — trip ${trips + 1}</div>
       <canvas width="560" height="320"></canvas>
       <div class="chart-ground"><b>Kingfisher Bank</b> · forecast: ☀️ calm → 🌬 choppy → ⛈ storm</div>
-      ${upgrades.length ? `<div class="chart-upg">Aboard: ${upgrades.join(' · ')}</div>` : ''}
+      ${upgrades.length ? `<div class="chart-upg">Aboard: ${upgrades.map(upgradeName).join(' · ')}</div>` : ''}
       <button class="btn primary big" data-go>⚓ Cast off for Kingfisher Bank</button>
     </div>`;
   parent.appendChild(el);

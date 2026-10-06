@@ -201,10 +201,50 @@ export class Game {
 
     // loose things on deck
     for (const p of L.buckets) items.add(ITEM_DEFS.bucket, makeBucket(), p.clone().setY(0.2));
-    // the pile of spare buoys against the port rail (Ike's landing pad)
-    for (let i = 0; i < 8; i++) {
-      const bp = L.buoyPile.clone().add(new THREE.Vector3((i % 2) * -0.5, 0.3 + Math.floor(i / 4) * 0.45, -0.9 + (i % 4) * 0.55));
-      items.add(ITEM_DEFS.buoy, makeBuoy(), bp);
+    // the pile of spare buoys against the port rail (Ike's landing pad): six on the deck and two
+    // in the hollows on top, packed against the rail clear of Dot (who starts next to it) and the
+    // crate. Balls roll apart on any tilt, so the pile is held still (all axes locked) until it's
+    // really disturbed — a tumbling body (Ike's slide in the tutorial), a thrown or sliding
+    // thing, someone running into it or picking a buoy off it; a crew member just brushing past
+    // doesn't count. From then on it's ordinary physics. Outside the tutorial, rough weather
+    // shakes it loose too.
+    {
+      const pile: Item[] = [];
+      const base = new THREE.Vector3(2.45, 0, 0.55);
+      const at = (dx: number, y: number, dz: number) => pile.push(items.add(ITEM_DEFS.buoy, makeBuoy(), base.clone().add(new THREE.Vector3(dx, y, dz))));
+      for (const dx of [0.29, -0.29]) for (const dz of [-0.58, 0, 0.58]) at(dx, 0.285, dz);
+      for (const dz of [-0.29, 0.29]) at(0, 0.67, dz);
+      const hold = (on: boolean) => {
+        for (const it of pile) {
+          it.body?.lockTranslations(on, true);
+          it.body?.lockRotations(on, true);
+        }
+      };
+      hold(true);
+      const mine = new Set(pile.map((it) => it.body?.handle));
+      this.dw.preStep.push(() => {
+        if (!pile.length) return;
+        let go = (this.trip?.phase !== 'tutorial' && this.dw.slopeDeg > 9) || pile.some((it) => it.heldBy);
+        const world = this.dw.world;
+        for (const it of pile) {
+          if (go || !it.collider) break;
+          world.contactPairsWith(it.collider, (other) => {
+            const b = other.parent();
+            if (go || !b || !b.isDynamic() || mine.has(b.handle)) return;
+            const own = this.dw.ownerOf(other);
+            const v = b.linvel();
+            const speed = Math.hypot(v.x, v.y, v.z);
+            const standing = own?.kind === 'crew' && (own.crew as Crew).state === 'stand';
+            if (standing ? speed < 3.5 : speed < 0.4) return;
+            world.contactPair(it.collider!, other, (m) => {
+              if (m.numContacts() > 0) go = true;
+            });
+          });
+        }
+        if (!go) return;
+        hold(false);
+        pile.length = 0;
+      });
     }
     this.weather = new WeatherDirector(this.ctx);
     this.ice = new IceSystem(this.ctx);
@@ -268,9 +308,10 @@ export class Game {
     });
     this.applyProgress();
 
-    // audio unlock on any gesture
+    // audio unlock on gestures that count as user activation (pointerdown doesn't for touch, and
+    // an AudioContext started there only logs "not allowed to start" warnings)
     const unlock = () => sfx.unlock();
-    for (const ev of ['pointerdown', 'keydown', 'touchend', 'click']) window.addEventListener(ev, unlock, { passive: true });
+    for (const ev of ['click', 'touchend', 'keydown']) window.addEventListener(ev, unlock, { passive: true });
     this.loops.sea = sfx.loop('sea', { volume: 0.7 });
     this.loops.engine = sfx.loop('engine', { volume: 0.5 });
     this.loops.wind = sfx.loop('wind', { volume: 0.2 });
@@ -330,6 +371,7 @@ export class Game {
   beginTrip(skipTutorial: boolean): void {
     this.loop.paused = false;
     this.hud.setVisible(true);
+    this.touch.setVisible(true);
     this.trip.start(skipTutorial);
   }
 

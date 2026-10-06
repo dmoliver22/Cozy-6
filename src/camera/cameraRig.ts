@@ -143,7 +143,11 @@ export class CameraRig {
     const b = this.blend;
     this.camera.position.lerpVectors(this.ohPos, this.fpPos, b);
     this.camera.quaternion.slerpQuaternions(this.ohQuat, this.fpQuat, b);
-    const fov = lerp(oh.fov, config.camera.fp.fov, b);
+    // first person in a tall, narrow view: widen the vertical FOV so the horizontal one stays
+    // at least the configured FOV (capped, so it doesn't turn into a fisheye)
+    let fpFov = config.camera.fp.fov;
+    if (this.camera.aspect < 1) fpFov = Math.min(100, 2 * THREE.MathUtils.radToDeg(Math.atan(Math.tan(THREE.MathUtils.degToRad(fpFov) / 2) / this.camera.aspect)));
+    const fov = lerp(oh.fov, fpFov, b);
     if (Math.abs(this.camera.fov - fov) > 0.01) {
       this.camera.fov = fov;
       this.camera.updateProjectionMatrix();

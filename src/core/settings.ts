@@ -8,6 +8,9 @@ export interface Settings {
   music: number; // 0..1
   invertLook: boolean;
   reduceFlashing: boolean;
+  /** off (default): a tap or click picks a thing up and keeps holding it, the next tap puts it down.
+   *  on: hold the button to carry, let go to put it down. */
+  holdToCarry: boolean;
 }
 
 const KEY = 'potluck.settings.v1';
@@ -21,7 +24,16 @@ export const defaultSettings: Settings = {
   music: 0.6,
   invertLook: false,
   reduceFlashing: false,
+  holdToCarry: false,
 };
+
+type Listener = (s: Settings) => void;
+const listeners: Listener[] = [];
+
+/** Be told whenever settings are saved (the menu saves on every change). */
+export function onSettingsChange(fn: Listener): void {
+  listeners.push(fn);
+}
 
 export function loadSettings(): Settings {
   try {
@@ -39,4 +51,5 @@ export function saveSettings(s: Settings): void {
   } catch {
     /* ignore */
   }
+  for (const fn of listeners) fn(s);
 }
