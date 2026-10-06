@@ -81,6 +81,12 @@ html, body {
 .hud-radio.urgent { background: #f2c230; }
 .hud-radio-who { font-weight: 900; font-size: 13px; opacity: .8; }
 .hud-radio-text { font-size: 17px; font-weight: 700; }
+/* small screens: a compact radio bubble so it doesn't cover the boat */
+@media (max-width: 480px), (max-height: 500px) {
+  .hud-radio { max-width: min(280px, 62vw); padding: 6px 10px; border-radius: 12px; }
+  .hud-radio-who { font-size: 11px; }
+  .hud-radio-text { font-size: 14px; line-height: 1.25; }
+}
 .hud-toast { position: absolute; left: 0; right: 0; margin: 0 auto; width: fit-content; max-width: min(92vw, 620px); top: calc(170px + var(--safe-t)); font-weight: 800; font-size: 17px; line-height: 1.3; text-align: center; text-shadow: 0 1px 2px rgba(0,0,0,.8); background: rgba(20,32,38,.72); padding: 6px 14px; border-radius: 16px; opacity: 0; transition: opacity .2s; }
 .hud-toast > span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .hud-toast.on { opacity: 1; }

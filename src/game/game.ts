@@ -706,6 +706,8 @@ export class Game {
     } else if (v) {
       text = `${v.icon} ${v.label}` + (touch ? '' : ` [${key(v.button === 'interact' ? 'interact' : 'use')}]`);
     }
+    // on touch the Action button already says what it will do: the pill only names what you carry
+    if (touch && !p.inSea) text = p.held && !v ? `${p.held.def.icon} ${p.held.data.label ?? p.held.def.label}` : '';
     const el = this.hud.promptEl;
     if (el.textContent !== text) el.textContent = text;
     el.style.opacity = text ? '1' : '0';
