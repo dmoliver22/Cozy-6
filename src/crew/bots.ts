@@ -21,6 +21,8 @@ import { events } from '../core/events';
 import { sfx } from '../audio';
 
 type Status = 'run' | 'done' | 'fail';
+/** how long a bot leaves a moment to a player who is lining it up */
+const DIBS_SEC = 6;
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 
@@ -328,6 +330,26 @@ export class BotBrain {
     return best < 0 ? null : { zone: best, level };
   }
 
+  /** The player is up, hands empty and within r of a spot: they're lining something up. */
+  playerNear(spot: THREE.Vector3, r: number): boolean {
+    const p = this.player;
+    if (!p.isUp || p.held || p.inSea) return false;
+    const me = p.pos(_v2);
+    return Math.hypot(me.x - spot.x, me.z - spot.z) <= r;
+  }
+
+  /** "Dibs": a bot leaves a moment to a player lining it up, for at most dibsSec per pot. */
+  dibsOpen(pot: Pot, key: 'dibsSince' | 'grappleDibsSince'): boolean {
+    const now = this.ctx.time;
+    pot[key] ??= now;
+    return now - pot[key]! < DIBS_SEC;
+  }
+
+  /** The player wants to land this hanging pot themselves (standing by the cradle, hands free). */
+  playerHasLandDibs(pot: Pot): boolean {
+    return this.playerNear(L.launcherSpot, 3.5) && this.dibsOpen(pot, 'dibsSince');
+  }
+
   private playerDoing(verbId: string): boolean {
     const p = this.player;
     return !!p.activeVerb && p.activeVerb.id === verbId;
@@ -350,7 +372,7 @@ export class BotBrain {
     // land a hanging pot (once the cradle is clear: until the last pot is tipped there's nowhere
     // to put it, and standing at the launcher would only block whoever has to tip)
     const hang = pots.hangingPot;
-    if (hang && hang.item && !hang.item.heldBy && !pots.cradlePot && this.free('land')) return claimed(new LandTask(hang), 'land');
+    if (hang && hang.item && !hang.item.heldBy && !pots.cradlePot && this.free('land') && !this.playerHasLandDibs(hang)) return claimed(new LandTask(hang), 'land');
     // haul
     const bp = pots.blockPot;
     if (bp && (bp.state === 'onBlock' || bp.state === 'rising') && !this.playerDoing('haul') && this.free('haul')) return claimed(new HaulTask(), 'haul');
@@ -362,7 +384,9 @@ export class BotBrain {
     const target = trip?.haulTarget?.() as Pot | null;
     if (target && target.state === 'soaking' && target.buoy && nav?.arrived && !pots.blockPot && !this.anyoneHolds('grapple') && !this.anyoneHolds('lineEnd')) {
       const g = this.ctx.sys.grapple;
-      if ((g.grapple.mode === 'fixed' || (g.grapple.mode === 'deck' && !g.grapple.heldBy)) && this.free('grapple')) return claimed(new GrappleTask(target), 'grapple');
+      const gp = g.grapple.mode === 'fixed' ? g.grapple.fixedPos : g.grapple.localPos(_v);
+      const dibs = this.playerNear(gp, 2.0) && this.dibsOpen(target, 'grappleDibsSince');
+      if ((g.grapple.mode === 'fixed' || (g.grapple.mode === 'deck' && !g.grapple.heldBy)) && this.free('grapple') && !dibs) return claimed(new GrappleTask(target), 'grapple');
     }
     if (c.held && c.held.kind === 'grapple' && target) return claimed(new GrappleTask(target), 'grapple');
     // setting: bait & launch
@@ -398,8 +422,16 @@ export class BotBrain {
     }
     let best: Item | null = null;
     let bd = Infinity;
+    // don't snatch the crab the player is reaching for
+    const pl = this.player;
+    const reach = pl.isUp && !pl.held ? pl.pos(new THREE.Vector3()) : null;
     for (const it of crabs.crabs as Item[]) {
       if (it.mode !== 'deck' || it.heldBy) continue;
+      if (reach && it.localPos(_v2).distanceTo(_v.set(reach.x, _v2.y, reach.z)) < 0.8) {
+        // …for a while: a crab parked at an idle player's boots still gets sorted
+        it.data.dibsSince ??= this.ctx.time;
+        if (this.ctx.time - it.data.dibsSince < DIBS_SEC) continue;
+      }
       const k = 'crab:' + it.id;
       const h = this.board.holder(k);
       if (h && h !== this.crew.id) continue;
@@ -609,7 +641,12 @@ class LandTask extends Task {
     if (pot.state !== 'hanging' || !it) return 'done';
     if (b.pots.cradlePot) return 'done'; // nowhere to land it yet (letting go just leaves it swinging)
     if (it.heldBy && it.heldBy !== (b.crew as unknown)) return 'fail';
-    if (!b.goTo(L.launcherSpot, 0.5)) return 'run';
+    // the player walked up to land it themselves: step aside (dibs, capped per pot)
+    if (it.heldBy !== (b.crew as unknown) && b.playerHasLandDibs(pot)) return 'done';
+    // the spot can be taken (the player standing at the launcher): the pot within reach is enough
+    const ia = b.ctx.interact.byId(it.data.iaId);
+    const near = b.pos().distanceTo(L.launcherSpot) < 1.6 && !!ia && b.crew.inReach(ia, b.pos());
+    if (!b.goTo(L.launcherSpot, 0.5) && !near) return 'run';
     b.holdUse(it.data.iaId);
     // wait until it swings over the cradle while the deck is level, then let go
     const p = it.localPos(new THREE.Vector3());

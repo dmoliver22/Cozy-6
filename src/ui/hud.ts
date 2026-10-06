@@ -1,6 +1,7 @@
 /**
  * HUD: wave-warning ring, radio bubble, world-anchored pops ("Held!"), toasts, off-screen indicators,
- * trip panel and crew portraits. Every warning is readable with sound off.
+ * trip panel (with the Knot Streak rope strip) and crew portraits. Every warning is readable with sound
+ * off, and so are the gold targets: the gold arc on the wave ring and the gold core of the spirit level.
  */
 import * as THREE from 'three';
 import type { RogueSide } from '../core/events';
@@ -17,7 +18,16 @@ interface Pop {
   local: THREE.Vector3;
   t: number;
   life: number;
+  /** a grade pop (at most MAX_GRADE_POPS on screen; the oldest makes room) */
+  grade?: boolean;
+  /** measured size (grade pops keep clear of the wave ring and the spirit level) */
+  w?: number;
+  h?: number;
 }
+
+const MAX_GRADE_POPS = 2;
+const WAVE_R = 42;
+const GOLD_R = 49;
 
 const _v = new THREE.Vector3();
 
@@ -35,6 +45,11 @@ export class Hud {
   readonly root: HTMLDivElement;
   private waveEl: HTMLDivElement;
   private waveArc: SVGCircleElement;
+  private waveGold: SVGCircleElement;
+  private waveGoldFrac = -1;
+  /** the last gold targets given (a caller that doesn't pass them gets these) */
+  private perfectSec = 1.2;
+  private coreDeg = 0;
   private waveLabel: HTMLDivElement;
   private waveSide: HTMLDivElement;
   private radioEl: HTMLDivElement;
@@ -54,9 +69,23 @@ export class Hud {
   private levelEl: HTMLDivElement;
   private levelBubble: HTMLDivElement;
   private levelWin: HTMLDivElement;
+  private levelCore: HTMLDivElement;
+  private tripMain: HTMLDivElement;
+  private scoreEl: HTMLDivElement;
+  private scoreKey = '';
+  private scoreBump = 0;
+  private toastAt = -1e9;
   private bigEl: HTMLDivElement;
   private bigTimer = 0;
-  reduceFlashing = false;
+  private _reduceFlashing = false;
+  /** Reduce flashing: no flashes, and every HUD/Log pulse and thump holds still (a class on <html> for the CSS). */
+  get reduceFlashing(): boolean {
+    return this._reduceFlashing;
+  }
+  set reduceFlashing(on: boolean) {
+    this._reduceFlashing = on;
+    document.documentElement.classList.toggle('reduce-flashing', on);
+  }
   onPortraitTap: ((id: string) => void) | null = null;
 
   constructor(parent: HTMLElement) {
@@ -64,25 +93,26 @@ export class Hud {
     r.className = 'hud';
     r.innerHTML = `
       <div class="hud-wave">
-        <svg viewBox="0 0 100 100"><circle class="bg" cx="50" cy="50" r="42"/><circle class="arc" cx="50" cy="50" r="42"/></svg>
+        <svg viewBox="0 0 100 100"><circle class="bg" cx="50" cy="50" r="42"/><circle class="wave-gold" cx="50" cy="50" r="49"/><circle class="arc" cx="50" cy="50" r="42"/></svg>
         <div class="hud-wave-icon">🌊</div>
         <div class="hud-wave-side"></div>
         <div class="hud-wave-label">HOLD BRACE!</div>
       </div>
       <div class="hud-toast"><span></span></div>
       <div class="hud-big"></div>
-      <div class="hud-trip"></div>
+      <div class="hud-trip blank"><div class="hud-trip-main"></div><div class="hud-score off"></div></div>
       <div class="hud-portraits"></div>
       <div class="hud-flash"></div>
       <div class="hud-stack">
         <div class="hud-radio"><div class="hud-radio-who">📻 Mo</div><div class="hud-radio-text"></div></div>
-        <div class="hud-level"><div class="hud-level-win"></div><div class="hud-level-bubble"></div><div class="hud-level-cap">LEVEL</div></div>
+        <div class="hud-level"><div class="hud-level-win"></div><div class="hud-level-core core"></div><div class="hud-level-bubble"></div><div class="hud-level-cap">LEVEL</div></div>
         <div class="prompt-hint"></div>
         <div class="prompt"></div>
       </div>`;
     parent.appendChild(r);
     this.waveEl = r.querySelector('.hud-wave')!;
     this.waveArc = r.querySelector('.hud-wave .arc')!;
+    this.waveGold = r.querySelector('.hud-wave .wave-gold')!;
     this.waveLabel = r.querySelector('.hud-wave-label')!;
     this.waveSide = r.querySelector('.hud-wave-side')!;
     this.radioEl = r.querySelector('.hud-radio')!;
@@ -91,6 +121,8 @@ export class Hud {
     this.toastEl = r.querySelector('.hud-toast')!;
     this.toastText = this.toastEl.querySelector('span')!;
     this.tripEl = r.querySelector('.hud-trip')!;
+    this.tripMain = r.querySelector('.hud-trip-main')!;
+    this.scoreEl = r.querySelector('.hud-score')!;
     this.portraitsEl = r.querySelector('.hud-portraits')!;
     this.promptEl = r.querySelector('.prompt')!;
     this.hintEl = r.querySelector('.prompt-hint')!;
@@ -98,24 +130,36 @@ export class Hud {
     this.levelEl = r.querySelector('.hud-level')!;
     this.levelBubble = r.querySelector('.hud-level-bubble')!;
     this.levelWin = r.querySelector('.hud-level-win')!;
+    this.levelCore = r.querySelector('.hud-level-core')!;
     this.bigEl = r.querySelector('.hud-big')!;
     const circ = 2 * Math.PI * 42;
     this.waveArc.style.strokeDasharray = `${circ}`;
     this.waveArc.style.strokeDashoffset = `${circ}`;
   }
 
-  /** Wave warning ring: fill 0..1 toward impact. */
-  setWave(state: { fill: number; side: RogueSide; secs: number; stage: number } | null, playerBraced: boolean): void {
+  /** Wave warning ring: fill 0..1 toward impact. perfectSec: the gold arc at the end of the ring (brace in it for PERFECT). */
+  setWave(state: { fill: number; side: RogueSide; secs: number; stage: number; lead?: number } | null, playerBraced: boolean, perfectSec = this.perfectSec): void {
+    this.perfectSec = perfectSec;
     if (!state) {
       this.waveEl.classList.remove('on');
       return;
     }
     this.waveEl.classList.add('on');
-    const circ = 2 * Math.PI * 42;
+    const circ = 2 * Math.PI * WAVE_R;
     this.waveArc.style.strokeDashoffset = `${circ * (1 - state.fill)}`;
+    // the gold target: the last perfectSec / lead of the ring
+    const lead = state.lead ?? (state.fill < 0.999 ? state.secs / Math.max(1e-3, 1 - state.fill) : 6.5);
+    const frac = Math.max(0, Math.min(1, perfectSec / Math.max(0.5, lead)));
+    if (Math.abs(frac - this.waveGoldFrac) > 0.002) {
+      this.waveGoldFrac = frac;
+      const gc = 2 * Math.PI * GOLD_R;
+      this.waveGold.style.strokeDasharray = `${gc * frac} ${gc}`;
+      this.waveGold.style.strokeDashoffset = `${-gc * (1 - frac)}`;
+    }
+    this.waveEl.classList.toggle('gold-now', !playerBraced && state.secs > 0 && state.secs <= perfectSec);
     const sideTxt = state.side === 'port' ? '◀ PORT' : state.side === 'starboard' ? 'STARBOARD ▶' : '▲ BOW';
     if (this.waveSide.textContent !== sideTxt) this.waveSide.textContent = sideTxt;
-    const lbl = playerBraced ? 'HELD — hang on!' : state.secs < 1.2 ? 'BRACE NOW!' : 'HOLD BRACE!';
+    const lbl = playerBraced ? 'HELD — hang on!' : state.secs < perfectSec ? 'BRACE NOW!' : 'HOLD BRACE!';
     if (this.waveLabel.textContent !== lbl) this.waveLabel.textContent = lbl;
     this.waveEl.classList.toggle('braced', playerBraced);
     this.waveEl.classList.toggle('urgent', state.secs < 1.5 && !this.reduceFlashing);
@@ -139,6 +183,21 @@ export class Hud {
     this.toastEl.style.color = color;
     this.toastEl.classList.add('on');
     this.toastTimer = secs;
+    this.toastAt = performance.now();
+  }
+
+  /** A toast that joins one shown a moment ago ("…the pot's loose! · Knot slipped!") instead of replacing it. */
+  toastMore(text: string, color = '#eaf2f0', secs = 2.6): void {
+    const fresh = this.toastTimer > 0 && performance.now() - this.toastAt < 400 && this.toastText.textContent;
+    if (fresh) {
+      this.toastText.textContent = `${this.toastText.textContent} · ${text}`;
+      this.toastTimer = Math.max(this.toastTimer, secs);
+    } else this.toast(text, color, secs);
+  }
+
+  /** A big banner is showing (lesser banners wait their turn). */
+  get bigBusy(): boolean {
+    return this.bigTimer > 0;
   }
 
   big(text: string, secs = 1.6): void {
@@ -157,17 +216,54 @@ export class Hud {
     this.flashEl.classList.add('on');
   }
 
-  /** A floating label anchored to a boat-local position. */
-  pop(text: string, local: THREE.Vector3, cls = '', life = 1.4): void {
+  /** A floating label anchored to a boat-local position. Grade pops are capped: the oldest makes room. */
+  pop(text: string, local: THREE.Vector3, cls = '', life = 1.4, grade = false): void {
+    if (grade) {
+      const mine = this.pops.filter((p) => p.grade);
+      for (let i = 0; i <= mine.length - MAX_GRADE_POPS; i++) {
+        mine[i].el.remove();
+        this.pops.splice(this.pops.indexOf(mine[i]), 1);
+      }
+    }
     const el = document.createElement('div');
-    el.className = `hud-pop ${cls}`;
+    el.className = `hud-pop ${cls}${grade ? ' grade' : ''}`;
     el.textContent = text;
     this.root.appendChild(el);
-    this.pops.push({ el, local: local.clone(), t: 0, life });
+    const scale = cls === 'perfect' ? 1.15 : 1;
+    this.pops.push({ el, local: local.clone(), t: 0, life, grade, w: grade ? el.offsetWidth * scale : 0, h: grade ? el.offsetHeight * scale : 0 });
   }
 
   setTrip(html: string): void {
-    if (this.tripEl.innerHTML !== html) this.tripEl.innerHTML = html;
+    if (this.tripMain.innerHTML !== html) this.tripMain.innerHTML = html;
+    this.tripEl.classList.toggle('blank', !html && this.scoreEl.classList.contains('off'));
+  }
+
+  /**
+   * The rope strip under the trip panel: "⚓ 4,250 · ×1.75" and six knot glyphs (each fills over 3 knots,
+   * so a full rope is the ×2.5 cap at 18). With scores hidden only the rope shows.
+   */
+  setScore(score: number, mult: number, knots: number, show = true): void {
+    const key = `${score}|${mult}|${knots}|${show}`;
+    if (key === this.scoreKey) return;
+    this.scoreKey = key;
+    const on = score > 0 || knots > 0;
+    this.scoreEl.classList.toggle('off', !on);
+    this.tripEl.classList.toggle('blank', !on && !this.tripMain.innerHTML);
+    if (!on) return;
+    let rope = '';
+    for (let i = 0; i < 6; i++) {
+      const f = Math.max(0, Math.min(3, knots - i * 3));
+      rope += `<i class="knot k${f}"></i>`;
+    }
+    const nums = show ? `<span class="hud-score-num">⚓ ${Math.round(score).toLocaleString('en-US')}</span>${mult > 1 ? ` <span class="hud-score-mult">×${mult.toFixed(2).replace(/0$/, '')}</span>` : ''}` : '<span class="hud-score-num">⚓</span>';
+    this.scoreEl.innerHTML = `${nums}<span class="hud-score-rope">${rope}</span>`;
+  }
+
+  /** The trip panel bounces when points land (the score glows gold for a moment). */
+  bumpScore(): void {
+    this.bumpTank();
+    this.scoreBump = 0.45;
+    this.scoreEl.classList.add('bump');
   }
 
   private tankBump = 0;
@@ -205,14 +301,17 @@ export class Hud {
     for (const c of Array.from(this.portraitsEl.children)) (c as HTMLDivElement).classList.toggle('sel', (c as HTMLDivElement).dataset.id === id);
   }
 
-  /** Spirit level (shown while landing a pot). angleDeg: current roll; window ±win. */
-  setLevel(show: boolean, angleDeg = 0, win = 4): void {
+  /** Spirit level (shown while landing a pot). angleDeg: current roll; window ±win; core ±core (the gold "dead level" band). */
+  setLevel(show: boolean, angleDeg = 0, win = 4, core = this.coreDeg): void {
+    this.coreDeg = core;
     this.levelEl.classList.toggle('on', show);
     if (!show) return;
     const x = Math.max(-1, Math.min(1, angleDeg / 15));
     this.levelBubble.style.left = `${50 + x * 45}%`;
     this.levelWin.style.width = `${(win / 15) * 90}%`;
+    this.levelCore.style.width = `${(core / 15) * 90}%`;
     this.levelEl.classList.toggle('good', Math.abs(angleDeg) < win);
+    this.levelBubble.classList.toggle('gold', core > 0 && Math.abs(angleDeg) <= core);
   }
 
   setIndicators(list: Indicator[], camera: THREE.Camera): void {
@@ -351,6 +450,28 @@ export class Hud {
     return out;
   }
 
+  /** The wave ring (with its labels) and the spirit level, while they show. */
+  private popAvoidBoxes(): Box[] {
+    const out: Box[] = [];
+    const add = (el: Element) => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 1 && r.height > 1) out.push({ x0: r.left - 4, y0: r.top - 4, x1: r.right + 4, y1: r.bottom + 4 });
+    };
+    if (this.waveEl.classList.contains('on')) {
+      add(this.waveEl);
+      add(this.waveSide);
+      add(this.waveLabel);
+      // one box for the ring and its labels
+      const n = out.length;
+      if (n >= 2) {
+        const u = out.splice(0, n).reduce((a, b) => ({ x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) }));
+        out.push(u);
+      }
+    }
+    if (this.levelEl.classList.contains('on')) add(this.levelEl);
+    return out;
+  }
+
   update(dt: number, camera: THREE.Camera, boatMatrix: THREE.Matrix4): void {
     if (this.radioTimer > 0) {
       this.radioTimer -= dt;
@@ -368,8 +489,13 @@ export class Hud {
       this.tankBump -= dt;
       if (this.tankBump <= 0) this.tripEl.classList.remove('bump');
     }
+    if (this.scoreBump > 0) {
+      this.scoreBump -= dt;
+      if (this.scoreBump <= 0) this.scoreEl.classList.remove('bump');
+    }
     const w = window.innerWidth,
       h = window.innerHeight;
+    let avoid: Box[] | null = null;
     for (let i = this.pops.length - 1; i >= 0; i--) {
       const p = this.pops[i];
       p.t += dt;
@@ -385,8 +511,18 @@ export class Hud {
       }
       p.el.style.display = 'block';
       const k = p.t / p.life;
-      p.el.style.left = `${(_v.x * 0.5 + 0.5) * w}px`;
-      p.el.style.top = `${(-_v.y * 0.5 + 0.5) * h - 30 - k * 36}px`;
+      let x = (_v.x * 0.5 + 0.5) * w;
+      let y = (-_v.y * 0.5 + 0.5) * h - 30 - k * 36;
+      if (p.grade) {
+        // a grade pop stays on screen and never sits on the wave ring or the spirit level
+        const hw = (p.w ?? 0) / 2 + 4,
+          hh = (p.h ?? 0) / 2 + 2;
+        x = Math.max(hw + 6, Math.min(w - hw - 6, x));
+        avoid ??= this.popAvoidBoxes();
+        for (const b of avoid) if (overlaps(x, y, hw, hh, b)) y = (b.y0 + b.y1) / 2 < h / 2 ? b.y1 + hh : b.y0 - hh;
+      }
+      p.el.style.left = `${x}px`;
+      p.el.style.top = `${y}px`;
       p.el.style.opacity = `${k < 0.75 ? 1 : 1 - (k - 0.75) * 4}`;
     }
   }

@@ -483,6 +483,9 @@ export class Crew {
     this.held = null;
     it.heldBy = null;
     this.throwAiming = false;
+    // credit: whoever let go of it last (drops and throws both come through here)
+    it.data.lastBy = this.id;
+    it.data.lastHeldAt = this.ctx.time;
     if (it.collider && it.mode === 'deck') {
       const col = it.collider;
       const g = it.def.group ?? CG.item;
@@ -503,6 +506,7 @@ export class Crew {
   throwTo(target: THREE.Vector3): void {
     const it = this.held;
     if (!it || !it.body) return;
+    const raw = target.clone(); // where they actually aimed, before the assist (grades the grapple)
     target = (this.ctx.sys.aimAssist?.(it, target) as THREE.Vector3 | undefined) ?? target;
     const t = it.body.translation();
     const from = _v.set(t.x, t.y, t.z);
@@ -516,7 +520,7 @@ export class Crew {
     const r = this.rng;
     it.body.setAngvel({ x: (r.next() - 0.5) * 8, y: (r.next() - 0.5) * 12, z: (r.next() - 0.5) * 8 }, true);
     sfx.play('throw', { volume: 0.7, pitch: 0.9 + d * 0.02 });
-    this.ctx.sys.onThrow?.(this, it, target.clone());
+    this.ctx.sys.onThrow?.(this, it, target.clone(), raw);
   }
 
   private stepCarry(dt: number): void {

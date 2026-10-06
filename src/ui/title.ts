@@ -1,9 +1,14 @@
 /**
  * Title card (first launch: "tap to cast off" — also unlocks audio on iOS) and the harbor chart
- * for later trips: one fishing ground with an escalating forecast.
+ * for later trips: one fishing ground, today's tide and Mo's word on it, the sea's tier and the
+ * forecast, today's best and your bests.
  */
 import { sfx, onAudioReady } from '../audio';
 import { UPGRADES } from '../harbor/market';
+import type { ChartView } from '../game/progress';
+import { pipsHtml } from './log';
+
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 /** "🔥 Deck heater lines" for an upgrade id (falls back to the id for anything unknown). */
 function upgradeName(id: string): string {
@@ -48,15 +53,28 @@ export function showTitle(parent: HTMLElement, firstTime: boolean, onGo: () => v
   });
 }
 
-export function showChart(parent: HTMLElement, trips: number, upgrades: string[], onGo: () => void): void {
+export function showChart(parent: HTMLElement, view: ChartView, onGo: () => void): void {
   const el = document.createElement('div');
   el.className = 'chart-screen interactive';
+  const v = view;
   el.innerHTML = `
     <div class="chart-card">
-      <div class="chart-title">Chart table — trip ${trips + 1}</div>
-      <canvas width="560" height="320"></canvas>
-      <div class="chart-ground"><b>Kingfisher Bank</b> · forecast: ☀️ calm → 🌬 choppy → ⛈ storm</div>
-      ${upgrades.length ? `<div class="chart-upg">Aboard: ${upgrades.map(upgradeName).join(' · ')}</div>` : ''}
+      <div class="chart-head">
+        <div class="chart-title">Chart table — trip ${v.trips + 1}</div>
+        <div class="chart-date">${esc(v.dateLine)} · <b>${esc(v.tideLine)}</b></div>
+      </div>
+      <div class="chart-body">
+        <canvas width="560" height="320"></canvas>
+        <div class="chart-info">
+          <div class="chart-mo"><span class="chart-mo-who">📻 Mo</span>${esc(v.moLine)}</div>
+          <div class="chart-ground"><b>Kingfisher Bank</b> · ${esc(v.seaLine)}</div>
+          <div class="chart-forecast">${esc(v.forecast)}</div>
+          <div class="chart-best today">${esc(v.todayBest)}</div>
+          ${v.yourBest ? `<div class="chart-best">${esc(v.yourBest)}</div>` : ''}
+          ${v.lastLand ? `<div class="chart-pips"><span>Last trip's landings</span><span class="log-pips">${pipsHtml(v.lastLand)}</span></div>` : ''}
+          ${v.upgrades.length ? `<div class="chart-upg">Aboard: ${v.upgrades.map(upgradeName).join(' · ')}</div>` : ''}
+        </div>
+      </div>
       <button class="btn primary big" data-go>⚓ Cast off for Kingfisher Bank</button>
     </div>`;
   parent.appendChild(el);

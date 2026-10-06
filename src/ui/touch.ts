@@ -313,6 +313,11 @@ export class TouchControls {
     if (!this.actionTouch || !this.actionTouch.dragging) this.throwVec = null;
   }
 
+  /** The BRACE button glows gold (a pulse; steady with reduce flashing) inside the PERFECT window. */
+  setBraceGold(on: boolean): void {
+    if (this.braceBtn.classList.contains('gold') !== on) this.braceBtn.classList.toggle('gold', on);
+  }
+
   setVisible(v: boolean): void {
     this.wanted = v;
     this.applyVisible();

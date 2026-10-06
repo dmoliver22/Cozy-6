@@ -115,7 +115,7 @@ export class IceSystem {
     if (!w) return;
     const heater = this.ctx.upgrades.has('heaterLines') ? config.weather.heaterIceScale : 1;
     const ice = this.ctx.surface.ice;
-    const rate = w.cur.iceRate * heater * (0.4 + w.snow);
+    const rate = w.cur.iceRate * heater * (0.4 + w.snow) * config.weather.iceScale;
     for (let i = 0; i < ice.length; i++) {
       // the fore walkways (row 2) ice a little less: the house shelters them
       const shelter = i >= 4 ? 0.6 : 1;

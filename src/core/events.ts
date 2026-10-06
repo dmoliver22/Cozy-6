@@ -8,7 +8,8 @@ export interface GameEvents {
   rogueRadio: { side: RogueSide; impactIn: number };
   rogueCrest: { side: RogueSide; impactIn: number };
   rogueImpact: { side: RogueSide; amp: number };
-  rogueResolved: { allHeld: boolean; heldCount: number; fallen: string[] };
+  /** tImpact: sim time of impact · braceAge: crew id → seconds braced at impact (−1 = not braced) · atImpact: crew on deck at impact */
+  rogueResolved: { allHeld: boolean; heldCount: number; fallen: string[]; tImpact?: number; braceAge?: Record<string, number>; atImpact?: string[] };
   braceStart: { crew: string };
   held: { crew: string };
   knockdown: { crew: string; pos: THREE.Vector3; reason: string };
@@ -18,12 +19,15 @@ export interface GameEvents {
   potLaunched: { index: number; string: number };
   buoyPopped: { index: number; string: number; worldPos: THREE.Vector3 };
   potHooked: { index: number };
-  potLanded: { good: boolean; levelDeg: number };
-  potTipped: { count: number };
+  /** grade: judged on the levelest the deck was over the release grace · by: who guided it · dx: metres off the cradle centre */
+  potLanded: { good: boolean; levelDeg: number; grade?: 'perfect' | 'good' | 'miss'; by?: string; dx?: number; stringNo?: number; pot?: number };
+  /** spawned: crabs that came out as bodies (the rest went down the chute) · tipId: stamped on each spawned crab */
+  potTipped: { count: number; spawned?: number; tipId?: number };
   golden: { localPos: THREE.Vector3 };
   special: { kind: string; localPos: THREE.Vector3 };
-  crabKept: { kind: string; correct: boolean };
-  crabReleased: { kind: string; correct: boolean };
+  /** by: who sorted it (whoever let go of it within the last 4 s) */
+  crabKept: { kind: string; correct: boolean; by?: string; tipId?: number; golden?: boolean };
+  crabReleased: { kind: string; correct: boolean; by?: string; tipId?: number };
   pinch: { crew: string };
   catSlide: { localPos: THREE.Vector3 };
   catPet: {};
@@ -33,6 +37,11 @@ export interface GameEvents {
   phase: { name: string };
   photo: { caption: string };
   tutorial: { step: string };
+  /** a grapple throw came down: rawErr = metres from the un-assisted aim point to the buoy it hooked (or the nearest one) */
+  hooked: { by: string; rawErr: number; dist: number; hit: boolean; stringNo?: number };
+  /** a scored skill moment (player only) */
+  grade: { moment: 'land' | 'brace' | 'hook' | 'sort' | 'bonus'; grade: string; label: string; points: number; mult: number; localPos: THREE.Vector3; knots: number; chain?: number; big?: string; bigMinor?: boolean };
+  streakBroken: { knots: number };
 }
 
 type Handler<T> = (payload: T) => void;

@@ -32,6 +32,9 @@ export class GrappleSystem {
   readonly homeQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.15);
   lastResult: 'hit' | 'miss' | null = null;
   lastThrowAt = -10;
+  /** where the thrower actually aimed (world, before the aim assist) and how far the nearest buoy was */
+  private rawAim: THREE.Vector3 | null = null;
+  private throwDist = 0;
 
   constructor(private ctx: Ctx) {
     ctx.sys.grapple = this;
@@ -50,13 +53,19 @@ export class GrappleSystem {
     return this.ctx.sys.pots as PotSystem;
   }
 
-  onThrow(crew: Crew, it: Item): void {
+  onThrow(crew: Crew, it: Item, _target?: THREE.Vector3, raw?: THREE.Vector3): void {
     if (it !== this.grapple) return;
     this.thrower = crew;
     this.lastThrowAt = this.ctx.time;
     this.hooked = null;
     this.reel = 0;
     this.lastResult = null;
+    this.rawAim = raw ? this.ctx.boat.localToWorld(raw.clone(), new THREE.Vector3()) : null;
+    // the throw's length: thrower to the nearest buoy out there (a Long Cast is 12 m+)
+    const me = this.ctx.boat.localToWorld(crew.pos(new THREE.Vector3()), new THREE.Vector3());
+    let d = Infinity;
+    for (const pot of this.pots.soakingPots()) d = Math.min(d, Math.hypot(pot.buoy!.wp.x - me.x, pot.buoy!.wp.z - me.z));
+    this.throwDist = Number.isFinite(d) ? d : 0;
   }
 
   private onLand(): void {
@@ -70,6 +79,23 @@ export class GrappleSystem {
         bd = d;
         best = pot;
       }
+    }
+    // grade the throw on the raw aim (the assist and the hook radius forgive; the grade doesn't)
+    if (this.thrower) {
+      let near: Pot | null = best;
+      if (!near) {
+        let nd = Infinity;
+        for (const pot of this.pots.soakingPots()) {
+          const d = Math.hypot(pot.buoy!.wp.x - g.wp.x, pot.buoy!.wp.z - g.wp.z);
+          if (d < nd) {
+            nd = d;
+            near = pot;
+          }
+        }
+      }
+      const aim = this.rawAim ?? g.wp;
+      const rawErr = near ? Math.hypot(near.buoy!.wp.x - aim.x, near.buoy!.wp.z - aim.z) : 99;
+      events.emit('hooked', { by: this.thrower.id, rawErr, dist: this.throwDist, hit: !!best && !this.pots.blockPot, stringNo: best?.stringNo });
     }
     if (best && !this.pots.blockPot) {
       this.hooked = best;

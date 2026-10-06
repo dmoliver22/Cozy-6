@@ -238,6 +238,49 @@ buoys are flagged `noOverboard` or handled by their own systems.
   756 s and the other 931 s. Each landed 10/10 pots good and banked 34–36 crabs, with
   5–6 rogue sets all held and 0–1 overboards.
 
+### Good Hands — skill grades, the Knot Streak, the season ramp, Today's Tide
+The four physical skills (brace, level landing, sorting, grapple) now grade the **player's own**
+work, and a run of good moments builds a streak that multiplies points. Safe play is unchanged:
+every gold target sits inside the old forgiving window.
+
+- **Credit and dibs.** `Crew.releaseHeld()` stamps `lastBy` / `lastHeldAt` on the item, so a sort
+  counts for whoever let go of the crab in the last 4 s, and a landing for whoever last held the
+  hanging pot (`pot.guideBy`). Bots leave a moment to a player lining it up: the landing while the
+  player stands within 3.5 m of the launcher with empty hands, the grapple within 2 m, a crab within
+  0.8 m of their boots. Each wait is capped at 6 s, so a parked player is never waited on.
+- **ScoreKeeper** (`game/score.ts`): `points = round(base × streakMult × weatherMult)`, where
+  `streakMult = min(2.5, 1 + 0.25 × floor(knots / 3))` and the weather multiplier is calm 1, choppy
+  1.25, storm 1.5. Knots come from PERFECT/GOOD/CLUTCH, RINGER/hooks, Clean Table/String, LIFELINE
+  and the brave storm call. A missed landing, a knockdown (not a torn-off brace), going overboard or
+  a wrong sort unties the streak; on trip 1 only a missed landing does. Points never go down.
+- **Landing:** graded on the levelest the deck was over the 80 ms before letting go (a ring buffer
+  of the same smoothed value the bubble shows). Gold core 1.5°, green window 4.5° (tier 2). After two
+  missed landings in a row Mo "holds her steady": +1.5° on the window, shown on the HUD.
+- **Brace:** graded by how long the player had been braced at impact: ≤ 1.2 s PERFECT (the gold arc
+  on the wave ring), ≤ 3 s GOOD, earlier SAFE; bracing within 0.4 s after impact and staying up is a
+  CLUTCH (slow-mo). The grade pops at the old "Held!" moment.
+- **Sorting:** player sorts ≤ 3 s apart build a ×N chain (10 × N points, cap 8). A tip sorted in
+  30 s with nothing wrong and at least half by the player is a Clean Table.
+- **Grapple:** graded on the raw aim (before the aim assist): within 1 m of the buoy is a RINGER,
+  a 12 m+ throw is a LONG CAST (×1.5).
+- **Rougher season** (`game/progress.ts`): trip n is fished at tier `[0,1,2,2,3,3,4,4,4,4][n−1]`,
+  written into `config` before the trip. Tier 2 is exactly the old config. Tier 0 is gentler (2 storm
+  sets, a 6° window) and tier 4 is a real storm (3.0 m storm sets, 4 of them, a 4° window). Floors:
+  lead time ≥ 5 s, window ≥ 4°, amplitude ≤ `maxAmp`.
+- **Today's Tide:** the day's seed is `FNV-1a("potluck:" + YYYY-MM-DD)`, so every trip that day
+  fishes the same water. One of seven flavours (Glassy Morning … Big Swell 🌶, Frost Smoke 🌶) is
+  picked per day and never repeats the day before; never on the tutorial trip. The chart shows the
+  tide, Mo's word on it, the sea's tier, today's best and your bests.
+- **Deckhand's Log** (`ui/log.ts`): an end-of-trip card before the fish buyer with a rank stamp
+  (Greenhorn … Old Salt), pip rows per skill, the longest streak, NEW BEST ribbons, one tip and the
+  bloopers. Save v2 adds `mastery`, `tides` (14 dates), `daysAtSea` and `lastDay`; v1 saves migrate.
+- **Pass test** (`scripts/probe-score.js`, 42 checks): dibs (no claim for 6 s, then a bot lands it;
+  5 m away it claims at once), landing grades and the 80 ms grace, Mo's steady hand and the HUD width,
+  brace PERFECT/GOOD/SAFE/CLUTCH, streak maths and untie rules (tier 0 lenient, bots never break it),
+  the sorting chain and Clean Table, the Show scores and reduce-flashing settings, the tier snapshot,
+  tides on 800 days, history/tide caps, and a v1 save booted in a frame through the Log, the fish
+  buyer and the galley. `probe-m7` (tier 2) still lands 10/10; tiers 0 and 4 also finish the trip.
+
 ---
 
 ## Performance notes
@@ -264,11 +307,15 @@ buoys are flagged `noOverboard` or handled by their own systems.
   `crew`, `bots`, `weather`, `rogue` and the other systems hang off it.
 - `window.__events` is the typed event bus.
 - **URL flags:**
-  - `?autostart=1` skips the title screen.
+  - `?autostart=1` skips the title screen. It also fishes tier 2 with the fixed seed and no tide,
+    so the probes see the original config.
+  - `?tier=0..4` forces the season tier; `?tide=0..6` forces today's tide (`-1` for none).
+  - `window.__progress` is `game/progress.ts` (tiers, tides, ranks, the views) for the probes.
   - `?skipTutorial=1` skips the tutorial.
   - `?weather=storm` pins the weather.
   - `?seed=N` sets the RNG seed.
   - `?touch=1` forces the touch UI.
-- **Scripts:** `scripts/shot.mjs <query> <out.png> [waitMs] [js] [--mobile]` loads the dev
-  server in headless Chromium, runs a probe and screenshots. The `scripts/probe-*.js` files
-  are the milestone probes.
+- **Scripts:** `scripts/shot.mjs <query> <out.png> [waitMs] [js] [--mobile | --viewport=WxH]`
+  loads the dev server in headless Chromium, runs a probe and screenshots (env: `SHOT_PORT`,
+  `WAIT_AFTER`, `DPR`, `CLIP=x,y,w,h`). The `scripts/probe-*.js` files are the milestone probes;
+  a probe may return a promise.

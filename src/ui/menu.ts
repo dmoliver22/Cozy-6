@@ -1,6 +1,6 @@
 /**
  * Pause menu with settings: quality, comfort roll, head-bob, haptics, volume, music,
- * invert look, reduce flashing, hold to carry. Big touch-friendly controls; the buttons stay
+ * invert look, reduce flashing, hold to carry, show scores. Big touch-friendly controls; the buttons stay
  * reachable (sticky) when the card has to scroll on a short screen.
  */
 import type { Settings } from '../core/settings';
@@ -37,6 +37,7 @@ export class PauseMenu {
         <label class="row"><span>Hold to carry<small class="row-note">Off: tap to pick up, tap again to put down</small></span><input type="checkbox" data-k="holdToCarry"></label>
         <label class="row"><span>Invert look</span><input type="checkbox" data-k="invertLook"></label>
         <label class="row"><span>Reduce flashing</span><input type="checkbox" data-k="reduceFlashing"></label>
+        <label class="row"><span>Show scores<small class="row-note">Off: grades keep their words, the numbers hide</small></span><input type="checkbox" data-k="showScores"></label>
         <div class="menu-help">
           <b>Desktop</b> WASD move · mouse aims · LMB grab/use, click again to put down · RMB aim & throw · Shift/Space brace · E interact · Q ping a bot · V view · F3 debug<br>
           <b>Gamepad</b> L-stick move · R-stick aim/look · A grab, A again to put down · X interact · LB brace · RT throw · RB ping · Y view<br>

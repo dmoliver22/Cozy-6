@@ -12,13 +12,18 @@ import type { CameraRig } from '../camera/cameraRig';
 import type { CrewManager } from '../crew/crewManager';
 import type { FixedLoop } from '../core/loop';
 import type { Ctx } from './ctx';
+import { loadSettings, onSettingsChange } from '../core/settings';
 
 const NAMES: Record<string, string> = { player: 'You', mo: 'Mo', dot: 'Dot', ike: 'Ike' };
 const _v = new THREE.Vector3();
+/** grade → pop class: gold for PERFECT / RINGER / CLUTCH, green GOOD, white SAFE, amber MISS */
+const GRADE_CLASS: Record<string, string> = { perfect: 'perfect', ringer: 'perfect', clutch: 'perfect', good: 'good', bonus: 'good', safe: 'safe', miss: 'miss' };
 
 export class Feedback {
   private slowmoLeft = 0;
   private offs: (() => void)[] = [];
+  /** the Show scores setting: off keeps the words and hides the numbers */
+  showScores = loadSettings().showScores;
 
   constructor(
     private ctx: Ctx,
@@ -28,6 +33,7 @@ export class Feedback {
     private loop: FixedLoop,
   ) {
     const on = <K extends Parameters<typeof events.on>[0]>(k: K, f: Parameters<typeof events.on<K>>[1]) => this.offs.push(events.on(k, f));
+    onSettingsChange((s) => (this.showScores = s.showScores));
 
     on('radio', ({ who, text, urgent }) => {
       const secs = Math.max(2.5, sfx.babble(text, { radio: true, pitch: who === 'Mo' ? 0.75 : 1.1 }) + 1.2);
@@ -42,7 +48,7 @@ export class Feedback {
     });
     on('held', ({ crew: id }) => {
       const c = crew.get(id as never);
-      if (!c) return;
+      if (!c || id === 'player') return; // the player's brace gets its grade pop instead
       hud.pop(id === 'player' ? 'Held!' : `${NAMES[id]} held!`, c.head(_v).setY(_v.y + 0.5), 'good');
     });
     on('rogueResolved', ({ allHeld, fallen }) => {
@@ -79,9 +85,36 @@ export class Feedback {
       if (c) hud.pop('Ow!', c.feet(_v).setY(0.9), 'bad', 0.9);
       if (id === 'player') haptics.buzz(config.haptics.pinch);
     });
-    on('crabKept', ({ correct }) => {
-      hud.pop(correct ? '+1' : '+1?', _v.set(0.7, 0.8, -2.0), correct ? 'plus' : 'bad', 0.9);
+    on('crabKept', ({ correct, by }) => {
+      // the player's own good sorts get a ×N chain pop from the score keeper instead
+      if (!(correct && by === 'player')) hud.pop(correct ? '+1' : '+1?', _v.set(0.7, 0.8, -2.0), correct ? 'plus' : 'bad', 0.9);
       hud.bumpTank();
+    });
+    // ---- scoring: grade pops, the streak ladder, juice
+    on('grade', (e) => {
+      const cls = GRADE_CLASS[e.grade] ?? 'good';
+      // misses pop only for landings (a fallen brace has its "Whoa!", a missed hook its toast)
+      if (e.grade !== 'miss' || e.moment === 'land') {
+        const text = this.showScores && e.points > 0 ? `${e.label} +${e.points.toLocaleString('en-US')}` : e.label;
+        hud.pop(text, e.localPos, cls, cls === 'perfect' ? 1.6 : 1.4, true);
+      }
+      if (cls === 'perfect') haptics.buzz([12, 30, 12]);
+      if (e.moment === 'sort') {
+        // an audible ladder up the chain
+        const k = e.chain ?? 1;
+        sfx.play('plus', { pitch: 1 + 0.07 * k, volume: 0.55 });
+        if (k === 5 || k === 8) sfx.play('chime', { volume: 0.45, delay: 0.05 });
+      } else if (e.points > 0) sfx.play('plus', { pitch: 1 + 0.05 * Math.min(e.knots, 14), volume: 0.6, delay: 0.05 });
+      if (e.grade === 'clutch') this.slowmo(0.2, 0.5);
+      if (e.big && !(e.bigMinor && hud.bigBusy)) {
+        hud.big(e.big);
+        sfx.play('fanfare', { volume: 0.7, delay: 0.1 });
+      }
+      if (e.points > 0) hud.bumpScore();
+    });
+    on('streakBroken', () => {
+      hud.toastMore('Knot slipped!', '#ffb070');
+      sfx.play('flop', { pitch: 1.2, volume: 0.6 });
     });
     on('golden', ({ localPos }) => {
       rig.pushTo(ctx.boat.localToWorld(_v.copy(localPos), new THREE.Vector3()), 1.8);
@@ -90,9 +123,11 @@ export class Feedback {
     });
   }
 
+  /** Slow motion. Two that overlap keep the longer and the slower (a CLUTCH never cuts ALL HELD short). */
   slowmo(seconds: number, scale: number): void {
-    this.slowmoLeft = seconds;
-    this.loop.timeScale = scale;
+    const active = this.slowmoLeft > 0;
+    this.slowmoLeft = active ? Math.max(this.slowmoLeft, seconds) : seconds;
+    this.loop.timeScale = active ? Math.min(this.loop.timeScale, scale) : scale;
   }
 
   update(dtReal: number): void {

@@ -63,6 +63,9 @@ import { Galley } from '../galley/galley';
 import { CREW_LOOKS } from '../art/crew';
 import { toonUnique } from '../art/materials';
 import { hullHalfWidth, BULWARK_T } from '../boat/layout';
+import { ScoreKeeper } from './score';
+import { applyTier, applyTide, tierFor, logView, recordTrip, rankLine } from './progress';
+import { showLog } from '../ui/log';
 
 const _p = new THREE.Vector3();
 const _m = new THREE.Matrix4();
@@ -92,6 +95,7 @@ export class Game {
   readonly rescue: RescueSystem;
   readonly spray: SprayFx;
   readonly feedback: Feedback;
+  readonly score: ScoreKeeper;
   readonly pots: PotSystem;
   readonly grapple: GrappleSystem;
   readonly specials: SpecialSystem;
@@ -176,9 +180,9 @@ export class Game {
     this.specials = new SpecialSystem(this.ctx);
     this.nav = new Navigator(this.boat);
     this.ctx.sys.nav = this.nav;
-    this.ctx.sys.onThrow = (c: Crew, it: Item) => {
+    this.ctx.sys.onThrow = (c: Crew, it: Item, target?: THREE.Vector3, raw?: THREE.Vector3) => {
       this.rescue.onThrow(c, it);
-      this.grapple.onThrow(c, it);
+      this.grapple.onThrow(c, it, target, raw);
     };
 
     // aim assist for throws into the sea: the grapple finds a buoy, the ring finds a swimmer
@@ -297,6 +301,8 @@ export class Game {
       render: (alpha, dtReal, dtSim) => this.render(alpha, dtReal, dtSim),
     });
     this.feedback = new Feedback(this.ctx, this.hud, this.rig, this.crew, this.loop);
+    // grades, points and the Knot Streak (the player's own skill moments)
+    this.score = new ScoreKeeper(this.ctx);
 
     this.trip = new Trip(this.ctx, this.ui);
     this.trip.onEnd = () => this.endTrip();
@@ -341,8 +347,10 @@ export class Game {
     if (this.stage.isPhone) this.rig.zoom = 0.5;
   }
 
-  /** Owned upgrades and the potluck buff from the last trip. */
+  /** The season tier and today's tide, owned upgrades and the potluck buff from the last trip. */
   private applyProgress(): void {
+    applyTier(tierFor(this.save));
+    applyTide(this.save);
     const up = new Set(this.save.upgrades);
     for (const u of up) this.ctx.upgrades.add(u);
     this.rogue.radarBonus = up.has('betterRadar') ? config.telegraph.radarBonusSec : 0;
@@ -387,28 +395,35 @@ export class Game {
     };
     this.save.finds.boot ||= newFinds.boot;
     this.save.finds.bell ||= newFinds.bell;
+    // the Deckhand's Log comes first (over the paused sea), then the fish buyer
+    const summary = this.score.summary();
+    const log = logView(this.save, summary, this.trip.stats, this.settings.showScores);
     this.loop.paused = true;
     this.fade(() => {
       this.mode = 'harbor';
       this.hud.setVisible(false);
       this.touch.setVisible(false);
       this.ui.style.display = 'none';
+      showLog(this.container, log, () => this.fade(() => {
       this.harbor = new Harbor(this.container, this.save, crabs.tank, this.ctx.time, { boot: this.save.finds.boot, bell: this.save.finds.bell });
       this.harbor.onDone = () =>
         this.fade(() => {
           const a = this.harbor!.appraisal;
           this.save.tripsCompleted++;
+          recordTrip(this.save, summary);
           this.save.photos = this.photos.photos.slice(0, config.photo.max);
           if (newFinds.bottle) this.save.finds.lore.push(this.save.tripsCompleted);
           this.save.lastTrip = { earnings: a.total, kg: a.kg, crabs: a.crabs, golden: a.golden, overboards: this.trip.stats.overboards, allHeld: this.trip.stats.allHeld, date: new Date().toISOString() };
           writeSave(this.save);
           this.mode = 'galley';
-          this.galley = new Galley(this.container, this.save, this.photos.photos, a, { overboards: this.trip.stats.overboards, allHeld: this.trip.stats.allHeld }, newFinds);
+          const galleyStats = { overboards: this.trip.stats.overboards, allHeld: this.trip.stats.allHeld, score: ` · ${rankLine(summary.score, this.settings.showScores)}` };
+          this.galley = new Galley(this.container, this.save, this.photos.photos, a, galleyStats, newFinds);
           this.galley.onNext = () => {
             writeSave(this.save);
             this.fade(() => location.reload());
           };
         });
+      }));
     });
   }
 
@@ -611,6 +626,7 @@ export class Game {
     }
     const hang = this.pots.hangingPot;
     this.hud.setLevel(!!hang, this.pots.deckLevelDeg(), config.fishing.levelWindowDeg);
+    this.updateScoreHud(player);
     this.hud.setIndicators(inds, this.stage.camera);
     this.hud.update(dtReal, this.stage.camera, this.boatGroup.matrixWorld);
     const statusIcon = (c: ReturnType<CrewManagerT['get']>) => {
@@ -645,6 +661,23 @@ export class Game {
       quality: this.stage.quality,
       extra: `player ${player.state}${player.braced ? ' braced' : ''}${player.sliding ? ' sliding' : ''} slope ${this.dw.slopeDeg.toFixed(1)}° water ${this.ctx.surface.water.toFixed(2)}`,
     });
+  }
+
+  /** Per-frame HUD for the scoring layer: the rope strip, the gold core and arc, the BRACE pulse, crab hints. */
+  private updateScoreHud(player: Crew): void {
+    const sk = this.score;
+    this.hud.setScore(sk.score, sk.mult, sk.knots, this.settings.showScores);
+    // the HUD level and the landing judge read the same numbers (Mo's steady hand included)
+    this.hud.setLevel(!!this.pots.hangingPot, this.pots.deckLevelDeg(), this.pots.levelWindow(), this.pots.levelCore());
+    const ws = this.rogue.hudState();
+    const perfectSec = config.brace.perfectSec;
+    this.hud.setWave(ws, player.braced || player.crouch, perfectSec);
+    this.touch.setBraceGold(!!ws && !player.braced && ws.secs > 0 && ws.secs <= perfectSec);
+    // trips 1–2: the prompt's crab label is tinted keeper-green / throw-back-amber
+    const crab = config.sort.hints && player.held?.kind === 'crab' ? player.held.data.crab : null;
+    const pr = this.hud.promptEl.classList;
+    if (pr.contains('tone-keep') !== (!!crab && crab.keep)) pr.toggle('tone-keep');
+    if (pr.contains('tone-toss') !== (!!crab && !crab.keep)) pr.toggle('tone-toss');
   }
 
   private updateAudio(): void {

@@ -1,9 +1,10 @@
 import './ui/style.css';
-import { applyUrlOverrides } from './config';
+import { applyUrlOverrides, config } from './config';
 import { initPhysics } from './core/physicsInit';
 import { Game } from './game/game';
 import { events } from './core/events';
 import { showTitle, showChart } from './ui/title';
+import * as progress from './game/progress';
 
 async function boot() {
   const params = applyUrlOverrides();
@@ -11,10 +12,13 @@ async function boot() {
   if (physics === 'js') console.info('Pot Luck: WebAssembly is blocked here, running the JavaScript build of the physics engine (slower).');
   (window as unknown as { __physics: string }).__physics = physics;
   const app = document.getElementById('app')!;
+  // Today's Tide: everyone fishing today fishes the same water (the probes keep the fixed seed)
+  if (params.seed === undefined && params.autostart !== '1') config.seed = progress.dailySeed();
   const game = new Game(app);
   (window as unknown as { __game: Game; __params: unknown }).__game = game;
   (window as unknown as { __params: unknown }).__params = params;
   (window as unknown as { __events: unknown }).__events = events;
+  (window as unknown as { __progress: unknown }).__progress = progress;
   game.start();
   // the sea idles behind the title until we cast off
   game.loop.paused = true;
@@ -23,7 +27,7 @@ async function boot() {
   const first = game.save.tripsCompleted === 0;
   if (params.autostart === '1') game.beginTrip(params.skipTutorial === '1' || !first);
   else if (first) showTitle(app, true, () => game.beginTrip(params.skipTutorial === '1'));
-  else showChart(app, game.save.tripsCompleted, game.save.upgrades, () => game.beginTrip(true));
+  else showChart(app, progress.chartView(game.save, game.settings.showScores), () => game.beginTrip(true));
   document.getElementById('loading')?.classList.add('hidden');
 }
 

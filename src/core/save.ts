@@ -1,12 +1,33 @@
-/** Progress saved in localStorage: owned upgrades, hat color, photos, finds, buff. */
+/** Progress saved in localStorage: owned upgrades, hat color, photos, finds, buff, bests and today's tide. */
 export interface PhotoRecord {
   img: string; // JPEG data URL
   caption: string;
   kind: string;
 }
 
+export interface Mastery {
+  bestScore: number;
+  bestStreak: number;
+  /** rank index 0..5 (Greenhorn … Old Salt) */
+  bestRank: number;
+  bestPerfectLandings: number;
+  /** lifetime counts */
+  perfects: { land: number; brace: number; hook: number };
+  clutches: number;
+  cleanTables: number;
+  /** the last 10 trips; land = landing pip string, e.g. "PGGPM" */
+  history: { d: string; s: number; r: number; land: string }[];
+}
+
+export interface TideRecord {
+  best: number;
+  rank: number;
+  flav: number;
+  runs: number;
+}
+
 export interface SaveData {
-  version: 1;
+  version: 1 | 2;
   tripsCompleted: number;
   coins: number;
   upgrades: string[];
@@ -15,15 +36,25 @@ export interface SaveData {
   buff: string | null;
   finds: { boot: boolean; bell: boolean; lore: number[] };
   lastTrip: { earnings: number; kg: number; crabs: number; golden: number; overboards: number; allHeld: number; date: string } | null;
+  mastery: Mastery;
+  /** today's best per local date (YYYY-MM-DD), the last 14 dates */
+  tides: Record<string, TideRecord>;
+  daysAtSea: number;
+  /** YYYY-MM-DD of the last completed trip */
+  lastDay: string | null;
 }
 
 const KEY = 'potluck.save.v1';
 /** window.name survives a reload of the same frame: the fallback when localStorage is unavailable */
 const WN = 'potluck.save:';
 
+export function defaultMastery(): Mastery {
+  return { bestScore: 0, bestStreak: 0, bestRank: 0, bestPerfectLandings: 0, perfects: { land: 0, brace: 0, hook: 0 }, clutches: 0, cleanTables: 0, history: [] };
+}
+
 export function defaultSave(): SaveData {
   return {
-    version: 1,
+    version: 2,
     tripsCompleted: 0,
     coins: 0,
     upgrades: [],
@@ -32,6 +63,26 @@ export function defaultSave(): SaveData {
     buff: null,
     finds: { boot: false, bell: false, lore: [] },
     lastTrip: null,
+    mastery: defaultMastery(),
+    tides: {},
+    daysAtSea: 0,
+    lastDay: null,
+  };
+}
+
+/** v1 saves load with the new fields zeroed and are written back as v2. */
+function migrate(d: any): SaveData {
+  const def = defaultSave();
+  const m = d.mastery && typeof d.mastery === 'object' ? d.mastery : {};
+  return {
+    ...def,
+    ...d,
+    finds: { ...def.finds, ...(d.finds ?? {}) },
+    mastery: { ...def.mastery, ...m, perfects: { ...def.mastery.perfects, ...(m.perfects ?? {}) }, history: Array.isArray(m.history) ? m.history.slice(-10) : [] },
+    tides: d.tides && typeof d.tides === 'object' ? d.tides : {},
+    daysAtSea: Number(d.daysAtSea) || 0,
+    lastDay: typeof d.lastDay === 'string' ? d.lastDay : null,
+    version: 2,
   };
 }
 
@@ -39,7 +90,7 @@ function parseSave(raw: string | null | undefined): SaveData | null {
   if (!raw) return null;
   try {
     const d = JSON.parse(raw);
-    if (d && d.version === 1) return { ...defaultSave(), ...d, finds: { ...defaultSave().finds, ...(d.finds ?? {}) } };
+    if (d && (d.version === 1 || d.version === 2)) return migrate(d);
   } catch {
     /* corrupt: ignore */
   }
