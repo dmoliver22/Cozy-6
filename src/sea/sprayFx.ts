@@ -1,49 +1,36 @@
 /**
  * Spray effects: world-space spray (crests meeting the bow, impacts, splashes)
  * and boat-local splashes (water cascading off a landed pot, ice shards…).
+ * Ripple rings on the sea are a RippleField (one instanced draw call).
  */
 import * as THREE from 'three';
 import { ParticleCloud } from './spray';
+import { RippleField } from './ripples';
 import type { Ctx } from '../game/ctx';
+import { seaWorld } from './seaLook';
 
 const _v = new THREE.Vector3();
 const _d = new THREE.Vector3();
-
-interface Ripple {
-  mesh: THREE.Mesh;
-  mat: THREE.MeshBasicMaterial;
-  age: number;
-  life: number;
-  size: number;
-}
 
 export class SprayFx {
   readonly world: ParticleCloud;
   readonly local: ParticleCloud;
   readonly shards: ParticleCloud;
+  readonly ripples: RippleField;
   private bowCooldown = 0;
-  private ripples: Ripple[] = [];
-  private rippleNext = 0;
 
   constructor(private ctx: Ctx, capacity: number) {
     // a small pool of expanding rings for things plopping into the sea
-    const ringGeo = new THREE.RingGeometry(0.8, 1, 32).rotateX(-Math.PI / 2);
-    for (let i = 0; i < 8; i++) {
-      const mat = new THREE.MeshBasicMaterial({ color: 0xeaf6f4, transparent: true, opacity: 0, depthWrite: false });
-      const mesh = new THREE.Mesh(ringGeo, mat);
-      mesh.visible = false;
-      mesh.renderOrder = 3;
-      ctx.scene.add(mesh);
-      this.ripples.push({ mesh, mat, age: 0, life: 1, size: 1 });
-    }
-    this.world = new ParticleCloud(capacity, 0xeaf2f0, 320);
+    this.ripples = new RippleField(ctx.sea, 10);
+    ctx.scene.add(this.ripples.mesh);
+    this.world = new ParticleCloud(capacity, 0xf2f6f4, 320);
     this.world.floor = (x, z) => ctx.sea.height(x, z);
     ctx.scene.add(this.world.points);
-    this.local = new ParticleCloud(Math.floor(capacity * 0.6), 0xd8f2f2, 320);
+    this.local = new ParticleCloud(Math.floor(capacity * 0.6), 0xe4f4f2, 320);
     this.local.drag = 1.2;
     this.local.floor = () => -0.05;
     ctx.boatGroup.add(this.local.points);
-    this.shards = new ParticleCloud(80, 0xf4fbff, 160);
+    this.shards = new ParticleCloud(80, 0xeaf6ff, 160, { shard: true });
     this.shards.floor = () => 0.02;
     this.shards.drag = 2;
     ctx.boatGroup.add(this.shards.points);
@@ -55,6 +42,10 @@ export class SprayFx {
     this.world.setPixelScale(s);
     this.local.setPixelScale(s);
     this.shards.setPixelScale(s * 0.6);
+    const w = h * (window.innerWidth / Math.max(1, window.innerHeight));
+    this.world.setViewport(w, h);
+    this.local.setViewport(w, h);
+    this.shards.setViewport(w, h);
   }
 
   /** Burst at a boat-local point, direction in local space. */
@@ -70,30 +61,38 @@ export class SprayFx {
     for (let i = 0; i < count; i++) {
       _v.set(p.x + (Math.random() - 0.5) * spread, p.y + Math.random() * 0.3, p.z + (Math.random() - 0.5) * spread);
       _d.set((Math.random() - 0.5) * 2, Math.random() * 1.5, (Math.random() - 0.5) * 2);
-      this.local.emit(_v, _d, 0.6 + Math.random() * 0.5, 0.35);
+      this.local.emit(_v, _d, 0.6 + Math.random() * 0.5, 0.22 + Math.random() * 0.22);
+    }
+    // a little mist where it lands
+    for (let i = 0; i < Math.max(1, count / 10); i++) {
+      _v.set(p.x + (Math.random() - 0.5) * spread, p.y + 0.1, p.z + (Math.random() - 0.5) * spread);
+      _d.set((Math.random() - 0.5) * 0.6, 0.3 + Math.random() * 0.4, (Math.random() - 0.5) * 0.6);
+      this.local.emit(_v, _d, 0.9 + Math.random() * 0.5, 0.9 + Math.random() * 0.6, 1);
     }
   }
 
   /** An expanding ripple ring on the sea surface (world point). */
   ripple(p: THREE.Vector3, size = 1, life = 1.3): void {
-    const r = this.ripples[this.rippleNext];
-    this.rippleNext = (this.rippleNext + 1) % this.ripples.length;
-    r.age = 0;
-    r.life = life;
-    r.size = size;
-    r.mesh.position.set(p.x, 0, p.z);
-    r.mesh.visible = true;
+    this.ripples.spawn(p.x, p.z, size, life * 1.15);
   }
 
   shardBurst(p: THREE.Vector3, count: number, big = false): void {
     for (let i = 0; i < count; i++) {
       _d.set((Math.random() - 0.5) * 3, 1 + Math.random() * 2.5, (Math.random() - 0.5) * 3).multiplyScalar(big ? 1.4 : 1);
-      this.shards.emit(p, _d, 0.7 + Math.random() * 0.6, big ? 0.35 : 0.25);
+      this.shards.emit(p, _d, 0.7 + Math.random() * 0.6, (big ? 0.35 : 0.25) * (0.6 + Math.random() * 0.7));
+    }
+    // a puff of frost dust
+    for (let i = 0; i < (big ? 4 : 2); i++) {
+      _d.set((Math.random() - 0.5) * 1.2, 0.5 + Math.random() * 0.6, (Math.random() - 0.5) * 1.2);
+      this.local.emit(p, _d, 0.7 + Math.random() * 0.4, big ? 1.2 : 0.8, 1);
     }
   }
 
+  /** Something hit the water at a world point: a crown splash, mist and a ripple ring. */
   splashWorld(p: THREE.Vector3, size: number): void {
-    this.world.burst(p, _d.set(0, 1, 0), Math.round(8 + size * 14), 2 + size * 3, 0.6 + size * 0.5, 0.9, 0.5 + size * 0.2);
+    const n = Math.round(10 + size * 16);
+    this.world.crown(p, 0.2 + size * 0.45, n, 2.2 + size * 2.6, 0.9, 0.45 + size * 0.2);
+    if (!this.ripples.recentNear(p.x, p.z, 0.8 + size, 0.15)) this.ripples.spawn(p.x, p.z, 0.8 + size * 1.4, 1.2 + size * 0.5);
   }
 
   step(dt: number): void {
@@ -106,23 +105,48 @@ export class SprayFx {
       this.bowCooldown = 0.5;
       const n = Math.round(6 + swell * 14);
       this.burstLocal(_v.set(0, 0.6, 10.2), _d.set(0, 1.2, 0.6), n, 3 + swell * 4, 1.0);
+      // sheets off both shoulders of the bow
+      this.burstLocal(_v.set(2.4, -0.1, 8.3), _d.set(1.1, 0.9, 0.3), Math.round(n * 0.4), 2 + swell * 3, 0.8);
+      this.burstLocal(_v.set(-2.4, -0.1, 8.3), _d.set(-1.1, 0.9, 0.3), Math.round(n * 0.4), 2 + swell * 3, 0.8);
+    }
+  }
+
+  /**
+   * Tell the sea shading about the floating gear nearest the boat (so storm foam keeps clear of
+   * buoys and pot markers) and the weather's wind (streak direction).
+   */
+  private feedSea(): void {
+    const mk = seaWorld.markers;
+    for (const m of mk) m.set(0, 0, 0, 0);
+    const bp = this.ctx.boat.pos;
+    let n = 0;
+    for (const it of this.ctx.items.items) {
+      if (it.mode !== 'sea' || !it.visible) continue;
+      const d = Math.hypot(it.wp.x - bp.x, it.wp.z - bp.z);
+      if (d > 60) continue;
+      // keep the nearest few: fill free slots, then replace the farthest
+      let slot = n < mk.length ? n++ : -1;
+      if (slot < 0) {
+        let far = -1;
+        for (let i = 0; i < mk.length; i++) {
+          const di = Math.hypot(mk[i].x - bp.x, mk[i].y - bp.z);
+          if (di > d && (far < 0 || di > Math.hypot(mk[far].x - bp.x, mk[far].y - bp.z))) far = i;
+        }
+        slot = far;
+      }
+      if (slot >= 0) mk[slot].set(it.wp.x, it.wp.z, 3.0, 1);
+    }
+    const w = this.ctx.sys.weather as { windDir?: THREE.Vector2; wind?: number } | undefined;
+    if (w?.windDir) {
+      seaWorld.windDir.copy(w.windDir);
+      seaWorld.wind = w.wind ?? 0;
+      seaWorld.hasWind = true;
     }
   }
 
   update(dt: number): void {
-    for (const r of this.ripples) {
-      if (!r.mesh.visible) continue;
-      r.age += dt;
-      const k = r.age / r.life;
-      if (k >= 1) {
-        r.mesh.visible = false;
-        continue;
-      }
-      const sc = r.size * (0.15 + Math.sqrt(k) * 0.9);
-      r.mesh.scale.set(sc, 1, sc);
-      r.mesh.position.y = this.ctx.sea.height(r.mesh.position.x, r.mesh.position.z) + 0.04;
-      r.mat.opacity = 0.7 * (1 - k) * Math.min(1, k * 8);
-    }
+    this.feedSea();
+    this.ripples.update(dt);
     this.world.update(dt);
     this.local.update(dt);
     this.shards.update(dt);
