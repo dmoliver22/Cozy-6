@@ -32,9 +32,10 @@ export const config = {
      * and boat; the sea is a ShaderMaterial and does not use it) */
     envIntensity: [0.75, 0.85] as [number, number],
     /** tilt-shift blur radius at full strength, as a fraction of the screen height */
-    tiltBlur: 0.017,
+    // (0.017 blurred the mid-distance swell rows away: they must stay readable)
+    tiltBlur: 0.013,
     /** soft edge between the sharp band and full blur (screen fractions): small = an obvious miniature band */
-    tiltSoft: 0.13,
+    tiltSoft: 0.16,
     /** the sharp band reaches this far (screen fractions) below the hull so the waterline foam and wake stay crisp */
     tiltBandBelow: 0.03,
     /** phones with devicePixelRatio >= 1.5 drop the tilt-shift pass when frames average more than this (ms) */
@@ -75,7 +76,11 @@ export const config = {
     foamSlope: 0.55,
     /** shading-only chop on top of the swell (slope gain of the relief layer in the sea shader):
      * lit backs and dark troughs that read from the overhead camera; the geometry is untouched */
-    relief: 0.28,
+    relief: 0.16,
+    /** shading-only swell rows on top of that (sea shader): slope gain, trough and crest form,
+     * phase-speed scale (1 = deep-water speed for their few-metre wavelengths), crest-line
+     * strength. They give the sea the directional rows the reference reads in */
+    rows: { gain: 0.26, form: 1.0, speed: 0.7, crest: 0.32 },
     colorDeep: 0x123f47,
     colorShallow: 0x1f5c66,
     colorFoam: 0xeaf2f0,

@@ -123,7 +123,9 @@ export class SprayFx {
   /**
    * Making way: a steady white bow wave peeling off both shoulders (the sea shader draws its foam
    * on the water; this is the spray thrown up from it). Droplets leave the hull outward and up in
-   * world space, so they stream aft as the boat moves on, with a soft puff of mist now and then.
+   * world space, so they stream aft as the boat moves on, and every few droplets a dense spray
+   * puff (a metre or two across, rim-lit warm by the low sun) rolls off the shoulder: the droplets
+   * alone are a few pixels at the overhead zoom and never read as spray.
    * The rate grows with speed and is scaled to the pool, so Low keeps room for splashes.
    */
   private bowWave(dt: number): void {
@@ -148,11 +150,15 @@ export class SprayFx {
       this.ctx.boat.dirLocalToWorld(_d, _v);
       _v.multiplyScalar((1.2 + 2.2 * sf) * (0.6 + Math.random() * 0.6));
       this.world.emit(_w, _v, 0.45 + Math.random() * 0.45, 0.22 + Math.random() * 0.2);
-      if (++this.bowPuff >= 7) {
+      if (++this.bowPuff >= 3) {
+        // a spray puff rolling off the shoulder, started clear of the flared topsides (the deck
+        // line overhangs the waterline: from above, a puff at the waterline is hidden by the hull)
         this.bowPuff = 0;
-        _v.multiplyScalar(0.25);
-        _v.y += 0.3;
-        this.world.emit(_w, _v, 0.9 + Math.random() * 0.5, 0.7 + Math.random() * 0.5 + sf * 0.3, 1);
+        _v.multiplyScalar(0.45);
+        _v.y += 0.45;
+        _d.set(side * (hullHalfWidth(z) + 0.35 + Math.random() * 0.4), WATERLINE + 0.4 + Math.random() * 0.3, z - Math.random() * 0.6);
+        this.ctx.boat.localToWorld(_d, _w);
+        this.world.emit(_w, _v, 0.7 + Math.random() * 0.4, (1.3 + Math.random() * 1.0) * (0.75 + 0.3 * sf), 3);
       }
     }
   }

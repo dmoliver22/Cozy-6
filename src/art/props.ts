@@ -18,9 +18,10 @@ import { paint, wood, metal, rope, rubber, glass, glow, line3, meshGridTex, canv
 
 export const C = {
   hullRed: 0xc9573c,
-  /** varnished hull planking (honey teak) and its narrow sheer stripe */
+  /** varnished hull planking (honey teak) and its sheer stripe (bright red-orange, edged in cream
+   * below so it still reads against the wood at the overhead and phone zooms) */
   hullWood: 0xb46a34,
-  hullWoodStripe: 0xe2582a,
+  hullWoodStripe: 0xe8462a,
   /** dark boot-top at the waterline: the lacy sea collar reads against it */
   boot: 0x2b2724,
   antifoul: 0x5b2523,
@@ -503,9 +504,10 @@ export function hullPaint(waterlineY: number): THREE.MeshStandardMaterial {
       uPin: { value: new THREE.Color(C.stripe) },
       uWL: { value: waterlineY },
     };
-    // sheer stripe band (metres of girth below the gunwale)
-    const st0 = woodHull ? 0.06 : 0.04,
-      st1 = woodHull ? 0.24 : 0.36;
+    // sheer stripe band (metres of girth below the gunwale); the wood hull's is edged in cream
+    const st0 = woodHull ? 0.05 : 0.04,
+      st1 = woodHull ? 0.4 : 0.36,
+      pinW = woodHull ? 0.055 : 0;
     m.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, uni);
       sh.vertexShader = sh.vertexShader
@@ -538,6 +540,10 @@ export function hullPaint(waterlineY: number): THREE.MeshStandardMaterial {
               #endif
               float stripe = smoothstep(${st0.toFixed(2)} - ga, ${st0.toFixed(2)} + ga, girth) * (1.0 - smoothstep(${st1.toFixed(2)} - ga, ${st1.toFixed(2)} + ga, girth));
               tint = mix(tint, uStripe, stripe);
+              #ifdef HULL_WOOD
+                float spin = smoothstep(${st1.toFixed(2)} - ga, ${st1.toFixed(2)} + ga, girth) * (1.0 - smoothstep(${(st1 + pinW).toFixed(3)} - ga, ${(st1 + pinW).toFixed(3)} + ga, girth));
+                tint = mix(tint, uPin, spin);
+              #endif
             #endif
             float bootTop = uWL + 0.22;
             float bootBot = uWL - 0.03;

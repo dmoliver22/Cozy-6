@@ -4,8 +4,10 @@
  *   scene → HDR target (HalfFloat, MSAA on High)
  *         → tilt-shift: separable 13-tap gaussian at half resolution (quarter when the radius is
  *           wide), radius scaled per pixel by the distance from a horizontal focus band (centred
- *           on the boat, reaching down past the waterline). Taps are weighted up by how far they exceed 1.0 in luma, so sun
- *           glints open into small bright bokeh discs instead of averaging into grey smears.
+ *           on the boat, reaching down past the waterline). Taps are clamped to a luma of 1.4
+ *           first: an HDR sun glint spread by the separable kernel turned into a bright square
+ *           (and with the old luma-weighted taps, a flat box); now it fades to a faint soft dot
+ *           and bloom, which reads the sharp scene, gives it its round glow.
  *           Full strength above the band (the far sea), weaker below it (the near water).
  *         → bloom (High): soft-threshold prefilter + 13-tap mip chain down to 1/32, tent upsample
  *           added back level by level (the "mip bloom" of CoD:AW / Unity URP)
@@ -58,8 +60,8 @@ float tiltMask(float y) {
 
 /**
  * Separable gaussian (13 taps folded into 7 bilinear fetches); radius grows away from the band.
- * Each tap is weighted by 1 + 3·max(0, luma − 1) (normalised), so HDR glints keep their punch
- * and spread into small bokeh discs rather than being averaged down into milky grey.
+ * Each tap is clamped to a luma of 1.4 (hue kept) before it is summed, so a sparkle never spreads
+ * into a square bokeh.
  */
 const TILT_FRAG = /* glsl */ `
 uniform sampler2D tIn;
@@ -68,10 +70,10 @@ ${MASK}
 varying vec2 vUv;
 vec3 acc; float wsum;
 void tap(vec2 uv, float g) {
-  vec3 t = min(texture2D(tIn, uv).rgb, vec3(16.0));
-  float w = g * (1.0 + 3.0 * min(max(dot(t, vec3(0.2126, 0.7152, 0.0722)) - 1.0, 0.0), 3.0));
-  acc += t * w;
-  wsum += w;
+  vec3 t = texture2D(tIn, uv).rgb;
+  t *= min(1.0, 1.4 / max(dot(t, vec3(0.2126, 0.7152, 0.0722)), 1e-4));
+  acc += t * g;
+  wsum += g;
 }
 void main() {
   vec2 s = uStep * tiltMask(vUv.y) / 5.176470588;
