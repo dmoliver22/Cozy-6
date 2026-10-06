@@ -18,6 +18,7 @@ export interface ActionInfo {
 
 export class TouchControls {
   readonly root: HTMLDivElement;
+  private parent: HTMLElement;
   active: boolean;
   recentlyUsed = false;
   moveX = 0;
@@ -42,8 +43,12 @@ export class TouchControls {
   private braceBtn: HTMLDivElement;
   private slingLine: HTMLDivElement;
   info: ActionInfo = { icon: '✋', label: '', tapIsInteract: false, canThrow: false, holding: false };
+  /** Set by the PlayerController while a tap carries something: the next tap lets go (or places it). */
+  carry: { icon: string; label: string } | null = null;
   /** portrait tap → ping mode handled by HUD */
   onViewPressed: (() => void) | null = null;
+  /** the game wants the controls on screen (a trip is under way); hidden behind the title and chart */
+  private wanted = false;
 
   constructor(parent: HTMLElement) {
     this.active = matchMedia('(pointer: coarse)').matches || new URLSearchParams(location.search).has('touch');
@@ -65,7 +70,8 @@ export class TouchControls {
     this.actionLabel = this.actionBtn.querySelector('.t-label')!;
     this.braceBtn = root.querySelector('.t-brace')!;
     this.slingLine = root.querySelector('.t-sling')!;
-    root.style.display = this.active ? 'block' : 'none';
+    this.parent = parent;
+    root.style.display = 'none';
 
     const canvas = document.getElementById('game-canvas') ?? document.body;
     const opts = { passive: false } as AddEventListenerOptions;
@@ -115,9 +121,14 @@ export class TouchControls {
     window.addEventListener('touchstart', () => {
       if (!this.active) {
         this.active = true;
-        root.style.display = 'block';
+        this.applyVisible();
       }
     });
+  }
+
+  /** Is a finger on the Action button right now? */
+  get actionDown(): boolean {
+    return !!this.actionTouch;
   }
 
   private touched(): void {
@@ -256,6 +267,10 @@ export class TouchControls {
 
   /** HUD tells us what the Action button will do. */
   setAction(info: ActionInfo): void {
+    if (this.carry && info.holding) {
+      // carrying on a tap: a tap lets go (placing it if that's what's under you), a drag throws
+      info = { ...info, icon: this.carry.icon, label: this.carry.label + (info.canThrow ? ' · drag: throw' : ''), holdLabel: undefined, tapIsInteract: false };
+    }
     this.info = info;
     if (this.actionIcon.textContent !== info.icon) this.actionIcon.textContent = info.icon;
     const lbl = info.holdLabel ? `${info.label} · hold: ${info.holdLabel}` : info.label;
@@ -277,6 +292,7 @@ export class TouchControls {
     if (this.braceDown) s.brace = true;
     if (this.interactLevel) s.interact = true;
     s.usePressed += this.edges.usePressed;
+    s.touchUsePressed += this.edges.usePressed;
     s.useReleased += this.edges.useReleased;
     s.interactPressed += this.edges.interactPressed;
     s.throwReleased += this.edges.throwReleased;
@@ -298,6 +314,14 @@ export class TouchControls {
   }
 
   setVisible(v: boolean): void {
-    this.root.style.display = v && this.active ? 'block' : 'none';
+    this.wanted = v;
+    this.applyVisible();
+  }
+
+  private applyVisible(): void {
+    const on = this.wanted && this.active;
+    this.root.style.display = on ? 'block' : 'none';
+    // the HUD makes room for the buttons
+    this.parent.classList.toggle('touch-ui', on);
   }
 }

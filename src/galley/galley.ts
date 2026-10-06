@@ -381,41 +381,61 @@ export class Galley {
     return sorted[0] ?? null;
   }
 
+  private postcardBusy = false;
+
   private async postcard(): Promise<void> {
     const best = this.bestPhoto();
-    if (!best) return;
+    // building the card takes a few seconds: one at a time, and say so on the button
+    if (!best || this.postcardBusy) return;
+    this.postcardBusy = true;
     sfx.play('pageTurn');
     const btn = this.ui.querySelector<HTMLButtonElement>('[data-pc]');
-    const url = await renderPostcard(best, { earnings: this.appraisal.total, kg: this.appraisal.kg, crabs: this.appraisal.crabs, golden: this.appraisal.golden, overboards: this.stats.overboards, allHeld: this.stats.allHeld }, this.save.hatColor);
-    const blob = dataUrlToBlob(url);
-    // inside the claude.ai viewer: the viewer's own save prompt
-    const dl = await platformDownloads();
-    if (dl) {
-      try {
-        await dl.save({ filename: 'potluck-postcard.png', data: blob });
-        if (btn) btn.textContent = '💌 Postcard saved';
+    let label = '💌 Save postcard';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '⏳ Developing…';
+    }
+    try {
+      // let the busy label paint before the heavy drawing starts
+      await new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+      const url = await renderPostcard(best, { earnings: this.appraisal.total, kg: this.appraisal.kg, crabs: this.appraisal.crabs, golden: this.appraisal.golden, overboards: this.stats.overboards, allHeld: this.stats.allHeld }, this.save.hatColor);
+      const blob = dataUrlToBlob(url);
+      // inside the claude.ai viewer: the viewer's own save prompt
+      const dl = await platformDownloads();
+      if (dl) {
+        try {
+          await dl.save({ filename: 'potluck-postcard.png', data: blob });
+          label = '💌 Postcard saved';
+          return;
+        } catch (e) {
+          if ((e as { code?: string })?.code === 'declined') return;
+          // anything else: show it so it can be saved by hand
+        }
+      }
+      if (!__ARTIFACT__) {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'potluck-postcard.png';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
         return;
-      } catch (e) {
-        if ((e as { code?: string })?.code === 'declined') return;
-        // anything else: show it so it can be saved by hand
+      }
+      this.showPostcard(URL.createObjectURL(blob));
+    } finally {
+      this.postcardBusy = false;
+      if (btn && btn.isConnected) {
+        btn.disabled = false;
+        btn.textContent = label;
       }
     }
-    if (!__ARTIFACT__) {
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'potluck-postcard.png';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      return;
-    }
-    this.showPostcard(URL.createObjectURL(blob));
   }
 
   /** Where the page can't save files: show the postcard full size to save by hand. */
   private showPostcard(src: string): void {
     const inner = this.ui.querySelector<HTMLElement>('.g-photos-inner')!;
-    inner.innerHTML = `<figure class="postcard-preview"><img src="${src}" alt="Pot Luck postcard"><figcaption>Right-click or long-press the postcard to save it.</figcaption></figure><div class="g-photo-actions"><button class="btn" data-x>Close</button></div>`;
+    // the hint first and the card sized to the screen, so the hint and Close are never below the fold
+    inner.innerHTML = `<figure class="postcard-preview"><figcaption>Right-click or long-press the postcard to save it.</figcaption><img src="${src}" alt="Pot Luck postcard"></figure><div class="g-photo-actions"><button class="btn" data-x>Close</button></div>`;
     inner.querySelector('[data-x]')!.addEventListener('click', () => {
       this.ui.querySelector('.g-photos')!.classList.remove('on');
       URL.revokeObjectURL(src);

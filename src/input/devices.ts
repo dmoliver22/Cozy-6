@@ -12,6 +12,8 @@ export interface DeviceSnapshot {
   brace: boolean;
   interact: boolean;
   usePressed: number;
+  /** how many of this frame's use presses came from the touch Action button */
+  touchUsePressed: number;
   useReleased: number;
   throwPressed: number;
   throwReleased: number;
@@ -38,6 +40,7 @@ export function makeSnapshot(): DeviceSnapshot {
     brace: false,
     interact: false,
     usePressed: 0,
+    touchUsePressed: 0,
     useReleased: 0,
     throwPressed: 0,
     throwReleased: 0,
@@ -98,11 +101,17 @@ export class Mouse {
   dy = 0;
   wheel = 0;
   locked = false;
+  /** the first mousemove after the pointer lock engages can carry a huge bogus movement */
+  private skipMove = false;
   constructor(private el: HTMLElement) {
     el.addEventListener('mousemove', (e) => {
       this.x = e.clientX;
       this.y = e.clientY;
       this.active = true;
+      if (this.skipMove) {
+        this.skipMove = false;
+        return;
+      }
       this.dx += e.movementX || 0;
       this.dy += e.movementY || 0;
     });
@@ -125,11 +134,18 @@ export class Mouse {
       { passive: false },
     );
     document.addEventListener('pointerlockchange', () => {
+      const was = this.locked;
       this.locked = document.pointerLockElement === this.el;
+      if (this.locked && !was) {
+        this.skipMove = true;
+        this.dx = this.dy = 0;
+      }
     });
   }
+  /** b is a MouseEvent.button index (0 left, 1 middle, 2 right); `buttons` is a bitmask in a
+   *  different order (1 left, 2 right, 4 middle). */
   isDown(b: number): boolean {
-    return (this.buttons & (1 << b)) !== 0;
+    return (this.buttons & ([1, 4, 2][b] ?? 0)) !== 0;
   }
   requestLock(): void {
     if (!this.locked && this.el.requestPointerLock) {

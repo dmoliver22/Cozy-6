@@ -62,6 +62,8 @@ export class BotBrain {
   forgetThisWave = false;
   lastWaveId = -1;
   ping: { point: THREE.Vector3; iaId: number | null; until: number } | null = null;
+  /** ice zones this bot couldn't get to lately (zone → sim time it may try again) */
+  readonly iceSkip = new Map<number, number>();
   readonly rng: Rng;
   status = '';
   speed = 0.85;
@@ -122,9 +124,14 @@ export class BotBrain {
   }
   /** Hold the use button on an interactable (press edge on the first frame). */
   holdUse(iaId: number | null): void {
-    const inp = this.crew.input;
+    const c = this.crew;
+    const inp = c.input;
     inp.targetId = iaId;
-    if (this.usingSince < 0) {
+    // Press again if the last press started nothing: it only put a tool down (levers and the
+    // hauler want empty hands), or the target was out of reach at that instant. Holding the
+    // button without a fresh press never starts a verb, so the bot would wait there forever.
+    const pressAgain = this.usingSince >= 0 && this.ctx.time - this.usingSince > 0.5 && !c.activeVerb && !c.held;
+    if (this.usingSince < 0 || pressAgain) {
       inp.usePressed = 1;
       this.usingSince = this.ctx.time;
     }
@@ -283,8 +290,9 @@ export class BotBrain {
     if (pj) return pj;
     // 7. chip ice (urgent once it gets really slick)
     const ice = ctx.sys.ice;
-    if (ice && ice.worstZone && ice.worstZone().level > 0.7 && !this.board.holder('chip')) {
-      const t = new ChipTask();
+    const worstIce = ice ? this.worstReachableIce() : null;
+    if (worstIce && worstIce.level > 0.7 && !this.board.holder('chip')) {
+      const t = new ChipTask(worstIce.zone);
       t.pri = 55;
       return t;
     }
@@ -293,7 +301,7 @@ export class BotBrain {
     if (sort) return sort;
     // fetch your hat
     if (!c.hatOn && c.hatItem && c.hatItem.mode === 'deck') return new HatTask(c.hatItem);
-    if (ice && ice.worstZone && ice.worstZone().level > 0.4 && !this.board.holder('chip')) return new ChipTask();
+    if (worstIce && worstIce.level > 0.4 && !this.board.holder('chip')) return new ChipTask(worstIce.zone);
     // cat care
     const cat = ctx.sys.cat;
     if (cat && cat.wantsInside?.() && !this.board.holder('cat') && c.id === 'dot') return new CatTask();
@@ -303,6 +311,23 @@ export class BotBrain {
   }
 
   // ------------------------------------------------------------------ planners
+  /** The iciest zone this bot hasn't recently failed to reach. */
+  worstReachableIce(): { zone: number; level: number } | null {
+    const ice = this.ctx.sys.ice;
+    if (!ice) return null;
+    let best = -1;
+    let level = -1;
+    for (let z = 0; z < ice.spots.length; z++) {
+      if ((this.iceSkip.get(z) ?? -1) > this.ctx.time) continue;
+      const l = ice.level(z);
+      if (l > level) {
+        level = l;
+        best = z;
+      }
+    }
+    return best < 0 ? null : { zone: best, level };
+  }
+
   private playerDoing(verbId: string): boolean {
     const p = this.player;
     return !!p.activeVerb && p.activeVerb.id === verbId;
@@ -322,9 +347,10 @@ export class BotBrain {
     const cp = pots.cradlePot;
     // tip a full pot
     if (cp && cp.state === 'cradle' && cp.catch && pots.cradleMode === 'idle' && !this.playerDoing('tip') && this.free('lever')) return claimed(new LeverTask('tip'), 'lever');
-    // land a hanging pot
+    // land a hanging pot (once the cradle is clear: until the last pot is tipped there's nowhere
+    // to put it, and standing at the launcher would only block whoever has to tip)
     const hang = pots.hangingPot;
-    if (hang && hang.item && !hang.item.heldBy && this.free('land')) return claimed(new LandTask(hang), 'land');
+    if (hang && hang.item && !hang.item.heldBy && !pots.cradlePot && this.free('land')) return claimed(new LandTask(hang), 'land');
     // haul
     const bp = pots.blockPot;
     if (bp && (bp.state === 'onBlock' || bp.state === 'rising') && !this.playerDoing('haul') && this.free('haul')) return claimed(new HaulTask(), 'haul');
@@ -538,8 +564,11 @@ class LeverTask extends Task {
     if (!cp || cp.state !== 'cradle' || pots.cradleMode !== 'idle') return 'done';
     if (this.mode === 'launch' && (!cp.baited || !pots.launchWanted)) return 'done';
     if (this.mode === 'tip' && !cp.catch) return 'done';
-    if (!b.goTo(L.launcherSpot, 0.5)) return 'run';
     const ia = b.ctx.interact.list.find((x) => x.name === 'launcher lever');
+    // the spot can be taken (someone else at the launcher) or hard to hold on ice: the lever
+    // within reach is enough, and a lever we can't get to goes back to the planner
+    const arrived = b.goTo(L.launcherSpot, 0.5) || (!!ia && b.crew.inReach(ia, b.pos()));
+    if (!arrived) return this.t > 15 ? 'fail' : 'run';
     b.holdUse(ia ? ia.id : null);
     return this.t > 8 ? 'fail' : 'run';
   }
@@ -548,11 +577,20 @@ class LeverTask extends Task {
 class HaulTask extends Task {
   name = 'haul';
   pri = 64;
-  step(b: BotBrain): Status {
+  private idleT = 0;
+  step(b: BotBrain, dt: number): Status {
     const bp = b.pots.blockPot;
     if (!bp || (bp.state !== 'onBlock' && bp.state !== 'rising')) return 'done';
-    if (!b.goTo(L.haulerSpot, 0.5)) return 'run';
+    const c = b.crew;
     const ia = b.ctx.interact.list.find((x) => x.name === 'hauler');
+    // on a slick deck the spot itself can be hard to hold: the lever within reach is enough
+    const arrived = b.goTo(L.haulerSpot, 0.5) || (!!ia && c.inReach(ia, b.pos()));
+    // not winching for a while (can't get there, or the lever won't take): let the planner
+    // pick again rather than standing here forever (this task outranks everything but brace
+    // and rescue, so nothing else would end it)
+    this.idleT = c.activeVerb && c.activeVerb.id === 'haul' ? 0 : this.idleT + dt;
+    if (this.idleT > 20) return 'fail';
+    if (!arrived) return 'run';
     b.holdUse(ia ? ia.id : null);
     return 'run';
   }
@@ -569,6 +607,7 @@ class LandTask extends Task {
     const pot = this.pot;
     const it = pot.item;
     if (pot.state !== 'hanging' || !it) return 'done';
+    if (b.pots.cradlePot) return 'done'; // nowhere to land it yet (letting go just leaves it swinging)
     if (it.heldBy && it.heldBy !== (b.crew as unknown)) return 'fail';
     if (!b.goTo(L.launcherSpot, 0.5)) return 'run';
     b.holdUse(it.data.iaId);
@@ -817,18 +856,25 @@ class ChipTask extends Task {
   name = 'chip ice';
   pri = 25;
   claimKey = 'chip';
-  private zone = -1;
-  step(b: BotBrain): Status {
+  /** progress check toward the chipping spot */
+  private bestD = Infinity;
+  private stuckT = 0;
+  constructor(private zone = -1) {
+    super();
+  }
+  step(b: BotBrain, dt: number): Status {
     const ice = b.ctx.sys.ice;
     const m = ice.mallet as Item;
     const c = b.crew;
-    if (this.zone < 0) this.zone = ice.worstZone().zone;
+    if (this.zone < 0) this.zone = b.worstReachableIce()?.zone ?? ice.worstZone().zone;
     const level = ice.level(this.zone);
     if (level < 0.08) {
       // this patch is clear: next worst, or hang the mallet back up
-      const w = ice.worstZone();
-      if (w.level > 0.3 && this.t < 40) {
+      const w = b.worstReachableIce();
+      if (w && w.level > 0.3 && this.t < 40) {
         this.zone = w.zone;
+        this.bestD = Infinity;
+        this.stuckT = 0;
         return 'run';
       }
       if (c.held === m) b.pressInteract(null); // put it down
@@ -843,7 +889,18 @@ class ChipTask extends Task {
     }
     const spot = ice.spots[this.zone] as THREE.Vector3;
     const me = b.pos();
-    if (Math.hypot(spot.x - me.x, spot.z - me.z) > 1.4) {
+    const d = Math.hypot(spot.x - me.x, spot.z - me.z);
+    if (d > 1.4) {
+      // walking into a wall (no route to that walkway, or skating in place on the ice):
+      // give this zone a rest and chip somewhere we can actually stand
+      if (d < this.bestD - 0.25) {
+        this.bestD = d;
+        this.stuckT = 0;
+      } else this.stuckT += dt;
+      if (this.stuckT > 5) {
+        b.iceSkip.set(this.zone, b.ctx.time + 45);
+        return 'fail';
+      }
       b.goTo(spot, 0.6);
       return 'run';
     }

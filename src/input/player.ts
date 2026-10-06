@@ -9,9 +9,10 @@ import { Keyboard, Mouse, Gamepads, makeSnapshot, type DeviceSnapshot } from './
 import type { CameraRig } from '../camera/cameraRig';
 import type { Crew } from '../crew/crew';
 import type { Ctx } from '../game/ctx';
-import { ItemManager } from '../deck/items';
+import { ItemManager, type Item } from '../deck/items';
 import { CG } from '../deck/groups';
 import type { TouchControls } from '../ui/touch';
+import { loadSettings, onSettingsChange } from '../core/settings';
 
 const _ray = new THREE.Raycaster();
 const _ndc = new THREE.Vector2();
@@ -42,6 +43,17 @@ export class PlayerController {
   lastDevice: 'mouse' | 'pad' | 'touch' = 'mouse';
   readonly aimLocal = new THREE.Vector3();
   aimValid = false;
+  /** The old way: hold the button to carry, let go to put it down (setting "Hold to carry"). */
+  holdToCarry = false;
+  /** Easy carry: what the player keeps holding after the button came up. */
+  latched: Item | null = null;
+  /** a press went to the sim while not carrying: see whether it picked something up */
+  private grabWatch = false;
+  private heldAtPress: Item | null = null;
+  /** the press that let go of a latched thing: ignore the button until it comes up */
+  private swallowUse = false;
+  /** touch: a press while carrying waits for the finger to lift (tap = put down, drag = throw) */
+  private touchLetGo = false;
 
   constructor(
     canvas: HTMLElement,
@@ -51,6 +63,12 @@ export class PlayerController {
     private hooks: PlayerHooks,
   ) {
     this.mouse = new Mouse(canvas);
+    this.holdToCarry = loadSettings().holdToCarry;
+    onSettingsChange((st) => {
+      if (st.holdToCarry === this.holdToCarry) return;
+      this.holdToCarry = st.holdToCarry;
+      this.resetLatch();
+    });
     canvas.addEventListener('mousedown', () => {
       this.lastDevice = 'mouse';
       if (this.rig.mode === 'fp') this.mouse.requestLock();
@@ -72,6 +90,7 @@ export class PlayerController {
     s.brace = kb.isDown('ShiftLeft', 'ShiftRight') || (!fp && kb.isDown('Space')) || (fp && kb.isDown('Space'));
     s.interact = kb.isDown('KeyE');
     s.usePressed = ms.pressed[0];
+    s.touchUsePressed = 0;
     s.useReleased = ms.released[0];
     s.throwPressed = ms.pressed[2];
     s.throwReleased = ms.released[2];
@@ -135,6 +154,7 @@ export class PlayerController {
     if (!this.enabled) {
       inp.move.set(0, 0);
       inp.use = inp.interact = inp.brace = inp.throwAim = false;
+      this.resetLatch();
       this.endFrame();
       return;
     }
@@ -237,16 +257,98 @@ export class PlayerController {
     } else inp.aim = null;
 
     // --- buttons (levels + latched edges)
-    inp.use = s.use;
+    const use = this.carryLatch(s, player);
+    inp.use = use.level;
     inp.interact = s.interact;
     inp.brace = s.brace;
     inp.throwAim = s.throwHeld;
-    inp.usePressed += s.usePressed;
+    inp.usePressed += use.pressed;
     inp.useReleased += s.useReleased;
+    this.carryPrompt(player);
     inp.interactPressed += s.interactPressed;
     inp.throwRelease += s.throwReleased;
     if (s.pingPressed) this.hooks.ping(this.aimValid ? this.aimLocal.clone() : null);
     this.endFrame();
+  }
+
+  /**
+   * Easy carry. A crew member drops what they carry as soon as `use` goes low (hold-to-carry,
+   * which the bots rely on). For the player the input layer instead keeps `use` latched after a
+   * press that picked something up, so a tap or click is enough to carry. The next press is the
+   * "let go": `use` drops (the crew then places or drops the thing, running any "place" verb) and
+   * the press starts nothing new. Hold verbs (levers) are not latched; throwing (RMB / RT / an
+   * Action drag) works while latched.
+   */
+  private carryLatch(s: DeviceSnapshot, player: Crew): { level: boolean; pressed: number } {
+    let level = s.use;
+    let pressed = s.usePressed;
+    if (this.holdToCarry) return { level, pressed };
+    const held = player.held;
+    // it left our hands some other way (thrown, put down by a brace or a knockdown, stolen)
+    if (this.latched && held !== this.latched) this.resetLatch();
+    // a pick-up press the sim has consumed: did it leave us holding something new to carry?
+    if (this.grabWatch && player.input.usePressed === 0) {
+      this.grabWatch = false;
+      if (held && held !== this.heldAtPress && held.def.carry !== 'sticky' && !player.activeVerb) this.latched = held;
+    }
+    // after letting go: the button is still down from that press
+    if (this.swallowUse) {
+      if (pressed === 0 && s.use) level = false;
+      else this.swallowUse = false;
+    }
+    if (this.latched) {
+      if (pressed > 0) {
+        if (s.touchUsePressed > 0) this.touchLetGo = true; // tap or slingshot? wait for the finger
+        else this.letGo(s.use);
+        pressed = 0;
+      }
+      if (this.touchLetGo) {
+        if (s.throwHeld) this.touchLetGo = false; // it's a drag: the release throws instead
+        else if (!this.touch?.actionDown) this.letGo(false);
+      }
+      if (this.latched) return { level: true, pressed: 0 };
+      return { level: false, pressed: 0 };
+    }
+    if (pressed > 0) {
+      // keep the level up until the sim has used this press, even for a click shorter than a frame
+      this.grabWatch = true;
+      this.heldAtPress = held;
+    }
+    if (this.grabWatch) level = true;
+    return { level, pressed };
+  }
+
+  private letGo(buttonStillDown: boolean): void {
+    this.latched = null;
+    this.touchLetGo = false;
+    this.swallowUse = buttonStillDown;
+  }
+
+  private resetLatch(): void {
+    this.latched = null;
+    this.grabWatch = false;
+    this.heldAtPress = null;
+    this.touchLetGo = false;
+  }
+
+  /** Spell out how to let go of what you're carrying (HUD hint line + the touch Action button). */
+  private carryPrompt(player: Crew): void {
+    const it = player.held;
+    let hint = '';
+    let touchCarry: { icon: string; label: string } | null = null;
+    if (it && it.def.carry !== 'sticky' && player.isUp) {
+      const place = player.targetVerbs.find((v) => v.id.startsWith('place'));
+      const what = place ? place.label.charAt(0).toLowerCase() + place.label.slice(1) : it.def.carry === 'push' ? 'let go' : 'put it down';
+      const dev = this.lastDevice;
+      if (this.latched || this.grabWatch) {
+        hint = dev === 'touch' ? `Tap Action to ${what}` : dev === 'pad' ? `Press A to ${what}` : `Click to ${what}`;
+        touchCarry = place ? { icon: place.icon, label: place.label } : { icon: '⤵', label: it.def.carry === 'push' ? 'Let go' : 'Put down' };
+      } else if (this.holdToCarry) {
+        hint = dev === 'touch' ? `Let go of Action to ${what}` : dev === 'pad' ? `Let go of A to ${what}` : `Let go of the button to ${what}`;
+      }
+    }
+    this.ctx.sys.hud?.setHint?.(hint);
+    if (this.touch) this.touch.carry = touchCarry;
   }
 
   private endFrame(): void {

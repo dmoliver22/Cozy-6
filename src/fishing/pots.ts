@@ -97,6 +97,8 @@ export class Pot {
   otter: THREE.Object3D | null = null;
   heldPrev = false;
   landedAt = -10;
+  /** seconds 'onLine' with no line anywhere (see PotSystem.stepPot) */
+  strandT = 0;
   readonly kinP = new THREE.Vector3();
   readonly kinQ = new THREE.Quaternion();
 
@@ -361,6 +363,19 @@ export class PotSystem {
     events.emit('potHooked', { index: pot.number });
   }
 
+  /** A hooked line got away before it came aboard: the buoy floats again off the block side. */
+  private unhook(pot: Pot): void {
+    pot.state = 'soaking';
+    pot.strandT = 0;
+    const g = this.ctx.sys.grapple as { hooked: Pot | null } | undefined;
+    if (g && g.hooked === pot) g.hooked = null;
+    const b = pot.buoy;
+    if (b) {
+      b.visible = true;
+      this.ctx.items.spawnInSea(b, this.ctx.boat.localToWorld(_v.set(-5, 0, 1), new THREE.Vector3()), new THREE.Vector3(), 'float');
+    }
+  }
+
   /** Line end clipped into the block. */
   clipToBlock(pot: Pot): void {
     if (this.blockPot) return;
@@ -573,6 +588,18 @@ export class PotSystem {
       return;
     }
     switch (pot.state) {
+      case 'onLine': {
+        // Hooked, but the line never came aboard: the grapple hands it over only if its thrower
+        // is still on their feet when it arrives, and a wave can knock them down mid-reel. With
+        // no line on deck the pot would wait 'onLine' forever (nobody re-throws at a pot that
+        // isn't soaking), so after a moment the buoy floats free again for another throw.
+        const g = this.ctx.sys.grapple as { hooked: Pot | null; grapple: Item } | undefined;
+        const reeling = !!g && g.hooked === pot && g.grapple.mode === 'sea';
+        const aboard = this.ctx.items.items.some((it) => it.kind === 'lineEnd' && it.data.pot === pot);
+        pot.strandT = reeling || aboard ? 0 : pot.strandT + dt;
+        if (pot.strandT > 1.5) this.unhook(pot);
+        break;
+      }
       case 'cradle':
       case 'launching':
       case 'tipping': {

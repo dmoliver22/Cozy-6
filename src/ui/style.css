@@ -36,7 +36,10 @@ html, body {
 
 #debug { position: absolute; left: calc(8px + var(--safe-l)); bottom: calc(8px + var(--safe-b)); z-index: 40; background: rgba(10,20,25,.75); color: #bff; font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace; padding: 8px 10px; border-radius: 8px; white-space: pre; pointer-events: none; }
 
-.prompt { position: absolute; left: 50%; bottom: calc(22px + var(--safe-b)); transform: translateX(-50%); padding: 8px 16px; border-radius: 999px; background: rgba(20,32,38,.72); color: var(--foam); font-weight: 700; font-size: 16px; letter-spacing: .2px; white-space: nowrap; transition: opacity .15s; box-shadow: 0 3px 10px rgba(0,0,0,.25); }
+.prompt { max-width: 100%; padding: 8px 16px; border-radius: 20px; background: rgba(20,32,38,.72); color: var(--foam); font-weight: 700; font-size: 16px; line-height: 1.3; letter-spacing: .2px; text-align: center; transition: opacity .15s; box-shadow: 0 3px 10px rgba(0,0,0,.25); }
+.prompt:empty { display: none; }
+.prompt-hint { max-width: 100%; padding: 4px 12px; border-radius: 12px; background: rgba(20,32,38,.6); color: var(--slicker); font-weight: 800; font-size: 14px; line-height: 1.3; text-align: center; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+.prompt-hint:empty { display: none; }
 
 /* ---- touch overlay ---- */
 .touch-layer { position: absolute; inset: 0; pointer-events: none; }
@@ -47,7 +50,7 @@ html, body {
 .t-action { right: calc(26px + var(--safe-r)); bottom: calc(118px + var(--safe-b)); width: 96px; height: 96px; background: var(--slicker); }
 .t-action.dim { opacity: .55; }
 .t-action .t-icon { font-size: 36px; line-height: 1; }
-.t-action .t-label { position: absolute; bottom: -24px; right: 0; white-space: nowrap; font-size: 13px; color: var(--foam); text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+.t-action .t-label { position: absolute; top: -23px; right: 0; white-space: nowrap; font-size: 13px; color: var(--foam); text-shadow: 0 1px 3px rgba(0,0,0,.7); }
 .t-brace { right: calc(132px + var(--safe-r)); bottom: calc(28px + var(--safe-b)); width: 96px; height: 96px; background: var(--buoy); color: #fff; }
 .t-brace .t-icon { font-size: 30px; line-height: 1; }
 .t-brace .t-label { font-size: 13px; margin-top: 2px; }
@@ -58,7 +61,8 @@ html, body {
 
 /* ---- HUD ---- */
 .hud { position: absolute; inset: 0; pointer-events: none; }
-.hud .prompt { bottom: calc(22px + var(--safe-b)); }
+/* bottom stack: Mo's radio, the spirit level, the carry hint and the prompt, in a column that never overlaps itself */
+.hud-stack { position: absolute; left: calc(14px + var(--safe-l)); right: calc(14px + var(--safe-r)); bottom: calc(18px + var(--safe-b)); display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
 .hud-wave { position: absolute; left: 50%; top: calc(12px + var(--safe-t)); transform: translateX(-50%) scale(.8); width: 112px; height: 112px; opacity: 0; transition: opacity .2s, transform .2s; }
 .hud-wave.on { opacity: 1; transform: translateX(-50%) scale(1); }
 .hud-wave svg { position: absolute; inset: 0; transform: rotate(-90deg); }
@@ -71,14 +75,16 @@ html, body {
 .hud-wave-icon { position: absolute; inset: 0; display: grid; place-items: center; font-size: 40px; }
 .hud-wave-side { position: absolute; left: 50%; top: 104px; transform: translateX(-50%); font-weight: 900; font-size: 15px; color: var(--slicker); white-space: nowrap; text-shadow: 0 2px 3px rgba(0,0,0,.6); }
 .hud-wave-label { position: absolute; left: 50%; top: 124px; transform: translateX(-50%); font-weight: 900; font-size: 22px; color: #fff; white-space: nowrap; text-shadow: 0 2px 4px rgba(0,0,0,.7); letter-spacing: 1px; }
-.hud-radio { position: absolute; left: calc(14px + var(--safe-l)); bottom: calc(86px + var(--safe-b)); max-width: min(360px, 60vw); background: rgba(240,166,90,.94); color: #2a1b0e; border-radius: 14px; padding: 8px 12px; box-shadow: 0 4px 12px rgba(0,0,0,.3); transform: translateY(12px); opacity: 0; transition: all .2s; }
-.hud-radio.on { opacity: 1; transform: none; }
+.hud-radio { align-self: flex-start; max-width: min(380px, 100%); background: rgba(240,166,90,.94); color: #2a1b0e; border-radius: 14px; padding: 8px 12px; box-shadow: 0 4px 12px rgba(0,0,0,.3); display: none; }
+.hud-radio.on { display: block; animation: radioin .2s ease-out; }
+@keyframes radioin { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 .hud-radio.urgent { background: #f2c230; }
 .hud-radio-who { font-weight: 900; font-size: 13px; opacity: .8; }
 .hud-radio-text { font-size: 17px; font-weight: 700; }
-.hud-toast { position: absolute; left: 50%; top: calc(170px + var(--safe-t)); transform: translateX(-50%); font-weight: 800; font-size: 17px; text-shadow: 0 1px 2px rgba(0,0,0,.8); background: rgba(20,32,38,.72); padding: 6px 14px; border-radius: 999px; opacity: 0; transition: opacity .2s; white-space: nowrap; max-width: 92vw; overflow: hidden; text-overflow: ellipsis; }
+.hud-toast { position: absolute; left: 0; right: 0; margin: 0 auto; width: fit-content; max-width: min(92vw, 620px); top: calc(170px + var(--safe-t)); font-weight: 800; font-size: 17px; line-height: 1.3; text-align: center; text-shadow: 0 1px 2px rgba(0,0,0,.8); background: rgba(20,32,38,.72); padding: 6px 14px; border-radius: 16px; opacity: 0; transition: opacity .2s; }
+.hud-toast > span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .hud-toast.on { opacity: 1; }
-.hud-big { position: absolute; left: 50%; top: 36%; transform: translate(-50%,-50%) scale(.6); font: 900 54px Georgia, serif; color: var(--slicker); text-shadow: 0 4px 0 #8a5a12, 0 8px 18px rgba(0,0,0,.4); opacity: 0; white-space: nowrap; }
+.hud-big { position: absolute; left: 50%; top: 36%; transform: translate(-50%,-50%) scale(.6); font: 900 clamp(26px, min(8.6vw, 12vh), 54px) Georgia, serif; color: var(--slicker); text-shadow: 0 4px 0 #8a5a12, 0 8px 18px rgba(0,0,0,.4); opacity: 0; white-space: nowrap; }
 .hud-big.on { animation: bigpop 1.6s ease-out forwards; }
 @keyframes bigpop { 0% { opacity: 0; transform: translate(-50%,-50%) scale(.5); } 12% { opacity: 1; transform: translate(-50%,-50%) scale(1.12); } 22% { transform: translate(-50%,-50%) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%,-60%) scale(1); } }
 .hud-pop { position: absolute; transform: translate(-50%,-50%); font-weight: 900; font-size: 20px; color: #fff; text-shadow: 0 2px 3px rgba(0,0,0,.7); white-space: nowrap; }
@@ -101,10 +107,13 @@ html, body {
 .hud-portrait .status { font-size: 15px; height: 18px; margin-top: -6px; }
 .hud-portrait .name { font-size: 12px; font-weight: 800; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
 .hud-ind { position: absolute; transform: translate(-50%,-50%); display: flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 999px; background: rgba(20,32,38,.6); border: 2px solid #fff; font-size: 13px; white-space: nowrap; }
+.hud-ind.edge { background: rgba(20,32,38,.82); }
+.hud-ind.minor { opacity: .8; font-size: 12px; }
 .hud-ind b { font-size: 12px; }
 .hud-ind.edge::after { content: ''; position: absolute; left: 50%; top: 50%; width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 12px solid #fff; transform: translate(-50%,-50%) rotate(calc(var(--ang) + 90deg)) translateY(-26px); }
-.hud-level { position: absolute; left: 50%; bottom: calc(76px + var(--safe-b)); transform: translateX(-50%); width: 240px; height: 30px; border-radius: 15px; background: rgba(216,240,224,.85); border: 3px solid #4a5560; opacity: 0; transition: opacity .2s; }
-.hud-level.on { opacity: 1; }
+.hud-level { position: relative; flex: none; margin-top: 18px; width: min(240px, 100%); height: 30px; border-radius: 15px; background: rgba(216,240,224,.85); border: 3px solid #4a5560; display: none; }
+.hud-level.on { display: block; animation: levelin .2s ease-out; }
+@keyframes levelin { from { opacity: 0; } to { opacity: 1; } }
 .hud-level-win { position: absolute; left: 50%; top: 2px; bottom: 2px; transform: translateX(-50%); background: rgba(88,196,106,.55); border-radius: 10px; }
 .hud-level.good .hud-level-win { background: rgba(88,196,106,.95); }
 .hud-level-bubble { position: absolute; top: 4px; width: 20px; height: 16px; border-radius: 50%; transform: translateX(-50%); background: #fff; box-shadow: inset 0 -2px 3px rgba(0,0,0,.2); transition: left .05s linear; }
@@ -116,7 +125,7 @@ html, body {
 /* ---- menus ---- */
 .menu { position: absolute; inset: 0; display: none; place-items: center; background: rgba(12,26,30,.55); backdrop-filter: blur(3px); z-index: 30; pointer-events: auto; }
 .menu.on { display: grid; }
-.menu-card { width: min(520px, 92vw); max-height: 88vh; overflow: auto; background: var(--paper); color: var(--ink); border-radius: 18px; padding: 18px 22px; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
+.menu-card { width: min(520px, 92vw); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); overflow: auto; overscroll-behavior: contain; touch-action: pan-y; background: var(--paper); color: var(--ink); border-radius: 18px; padding: 18px 22px; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
 .menu-title { font: 900 34px Georgia, serif; color: var(--hull); }
 .menu-sub { opacity: .6; margin: -2px 0 10px; }
 .menu .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px dashed rgba(0,0,0,.12); font-weight: 700; }
@@ -126,6 +135,9 @@ html, body {
 .menu .val { width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
 .menu-help { font-size: 12.5px; line-height: 1.5; margin: 12px 0; opacity: .8; }
 .menu-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+.menu-card > .menu-buttons { position: sticky; bottom: -18px; margin: 0 -22px -18px; padding: 12px 22px 18px; background: var(--paper); border-top: 1px dashed rgba(0,0,0,.12); }
+.menu .row-note { font-size: 12px; font-weight: 600; opacity: .65; display: block; }
+@media (max-height: 640px) { .menu .row { padding: 4px 0; } .menu-title { font-size: 28px; } .menu-help { margin: 8px 0; } }
 .btn { font: 800 17px 'Trebuchet MS', system-ui, sans-serif; padding: 12px 20px; min-height: 52px; border-radius: 14px; border: 0; background: #e3d9c4; color: var(--ink); cursor: pointer; box-shadow: 0 3px 0 rgba(0,0,0,.18); }
 .btn.primary { background: var(--slicker); }
 .btn:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0,0,0,.18); }
@@ -135,7 +147,9 @@ html, body {
 .rotate-hint { position: absolute; left: 50%; top: 40%; transform: translate(-50%,-50%); background: rgba(20,32,38,.85); padding: 14px 20px; border-radius: 16px; font-weight: 800; text-align: center; display: none; }
 .rotate-hint.on { display: block; }
 
-.objective { position: absolute; left: 50%; top: calc(10px + var(--safe-t)); transform: translateX(-50%); background: rgba(246,239,224,.92); color: var(--ink); font-weight: 800; font-size: 15px; padding: 7px 14px; border-radius: 12px; box-shadow: 0 3px 10px rgba(0,0,0,.25); white-space: nowrap; max-width: 70vw; overflow: hidden; text-overflow: ellipsis; display: none; }
+.objective { position: absolute; left: 0; right: 0; margin: 0 auto; width: fit-content; top: calc(10px + var(--safe-t)); max-width: calc(100vw - 480px); background: rgba(246,239,224,.92); color: var(--ink); font-weight: 800; font-size: 15px; line-height: 1.3; text-align: center; padding: 7px 14px; border-radius: 12px; box-shadow: 0 3px 10px rgba(0,0,0,.25); display: none; }
+/* trip.ts shows the objective with an inline display:block; clamp it to two lines instead of an ellipsis */
+.objective[style*="block"] { display: -webkit-box !important; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .decision { position: absolute; inset: 0; display: none; place-items: center; background: rgba(12,26,30,.35); z-index: 25; pointer-events: auto; }
 .decision.on { display: grid; }
 .decision-card { width: min(460px, 92vw); background: var(--amber); color: #2a1b0e; border-radius: 18px; padding: 16px 18px; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
@@ -219,9 +233,57 @@ html, body {
 .polaroid figcaption { color: #23262b; font: italic 17px Georgia, serif; text-align: center; padding: 8px 0; }
 .g-photo-actions { width: 100%; display: flex; justify-content: center; gap: 10px; }
 .postcard-preview { margin: 0; width: min(480px, 92vw); }
-.postcard-preview img { width: 100%; display: block; box-shadow: 0 10px 28px rgba(0,0,0,.55); -webkit-touch-callout: default; user-select: auto; -webkit-user-select: auto; }
-.postcard-preview figcaption { color: #f6efe0; font-size: 15px; text-align: center; padding: 12px 0 0; }
+.postcard-preview img { display: block; margin: 0 auto; width: auto; max-width: 100%; max-height: min(70vh, calc(100vh - 170px)); box-shadow: 0 10px 28px rgba(0,0,0,.55); -webkit-touch-callout: default; user-select: auto; -webkit-user-select: auto; }
+.postcard-preview figcaption { color: #f6efe0; font-size: 15px; text-align: center; padding: 0 0 12px; }
+.g-photos-inner:has(.postcard-preview) { padding: 16px 16px 24px; gap: 14px; }
 .g-empty { color: #f6efe0; font-size: 18px; padding: 40px; }
 
 #fade { position: fixed; inset: 0; background: #1a120c; opacity: 0; pointer-events: none; transition: opacity .6s; z-index: 60; }
 #fade.on { opacity: 1; }
+
+/* ---- responsive HUD: phones in portrait, narrow side panels, small landscape phones ---- */
+/* touch: the bottom stack stays clear of the BRACE / Action cluster on the right */
+.touch-ui .hud-stack { right: calc(244px + var(--safe-r)); }
+.touch-ui .hud-trip { left: calc(90px + var(--safe-l)); }
+/* smaller screens: a compact top row (menu, trip panel, smaller portraits) */
+@media (max-width: 759px) {
+  .hud-trip { left: calc(10px + var(--safe-l)); top: calc(10px + var(--safe-t)); font-size: 13px; padding: 5px 10px; max-width: 150px; }
+  .touch-ui .hud-trip { left: calc(70px + var(--safe-l)); }
+  .hud-portraits { right: calc(6px + var(--safe-r)); top: calc(8px + var(--safe-t)); gap: 2px; }
+  .hud-portrait { width: 48px; }
+  .hud-portrait .face { width: 36px; height: 36px; font-size: 17px; border-width: 2px; }
+  .hud-portrait .status { font-size: 13px; height: 15px; margin-top: -5px; }
+  .hud-portrait .name { font-size: 11px; }
+  .t-menu { left: calc(8px + var(--safe-l)); top: calc(8px + var(--safe-t)); width: 54px; height: 54px; font-size: 24px; }
+  .objective { max-width: calc(100vw - 400px); font-size: 14px; padding: 6px 12px; }
+  .hud-toast { font-size: 15px; }
+  .hud-radio-text { font-size: 15px; }
+  .prompt { font-size: 15px; padding: 7px 14px; }
+}
+/* narrow (phones upright, side panels): the trip panel and portraits share the first row, the
+   objective (up to two lines) and the wave ring move to a second row */
+@media (max-width: 639px) {
+  .hud-trip { max-width: calc(100vw - 190px); }
+  .touch-ui .hud-trip { max-width: calc(100vw - 250px); }
+  .objective { top: calc(74px + var(--safe-t)); max-width: calc(100vw - 24px); }
+  .hud-wave { top: calc(74px + var(--safe-t)); }
+  .hud-toast { top: calc(136px + var(--safe-t)); font-size: 14px; }
+}
+/* phones held upright (and other narrow screens): a compact button cluster in the corner,
+   the prompt and radio stacked above it */
+@media (max-width: 600px) {
+  .t-view { right: calc(12px + var(--safe-r)); bottom: calc(12px + var(--safe-b)); width: 56px; height: 56px; font-size: 24px; }
+  .t-action { right: calc(12px + var(--safe-r)); bottom: calc(80px + var(--safe-b)); width: 88px; height: 88px; }
+  .t-action .t-icon { font-size: 32px; }
+  .t-brace { right: calc(80px + var(--safe-r)); bottom: calc(12px + var(--safe-b)); width: 88px; height: 88px; }
+  .touch-ui .hud-stack { right: calc(12px + var(--safe-r)); left: calc(12px + var(--safe-l)); bottom: calc(196px + var(--safe-b)); }
+}
+/* short landscape phones: smaller buttons so the deck stays visible */
+@media (max-height: 420px) and (min-width: 601px) {
+  .t-action { width: 84px; height: 84px; bottom: calc(108px + var(--safe-b)); }
+  .t-brace { width: 84px; height: 84px; right: calc(120px + var(--safe-r)); bottom: calc(22px + var(--safe-b)); }
+  .t-view { width: 58px; height: 58px; }
+  .touch-ui .hud-stack { right: calc(222px + var(--safe-r)); bottom: calc(12px + var(--safe-b)); gap: 6px; }
+  .hud-toast { top: calc(84px + var(--safe-t)); font-size: 15px; }
+  .hud-big { top: 50%; }
+}

@@ -1,6 +1,7 @@
 /**
  * Pause menu with settings: quality, comfort roll, head-bob, haptics, volume, music,
- * invert look, reduce flashing. Big touch-friendly controls.
+ * invert look, reduce flashing, hold to carry. Big touch-friendly controls; the buttons stay
+ * reachable (sticky) when the card has to scroll on a short screen.
  */
 import type { Settings } from '../core/settings';
 
@@ -33,12 +34,13 @@ export class PauseMenu {
         <label class="row"><span>Haptics</span><input type="checkbox" data-k="haptics"></label>
         <label class="row"><span>Volume</span><input type="range" min="0" max="1" step="0.05" data-k="volume"></label>
         <label class="row"><span>Music</span><input type="range" min="0" max="1" step="0.05" data-k="music"></label>
+        <label class="row"><span>Hold to carry<small class="row-note">Off: tap to pick up, tap again to put down</small></span><input type="checkbox" data-k="holdToCarry"></label>
         <label class="row"><span>Invert look</span><input type="checkbox" data-k="invertLook"></label>
         <label class="row"><span>Reduce flashing</span><input type="checkbox" data-k="reduceFlashing"></label>
         <div class="menu-help">
-          <b>Desktop</b> WASD move · mouse aims · LMB grab/use (hold to carry) · RMB aim & throw · Shift/Space brace · E interact · Q ping a bot · V view · F3 debug<br>
-          <b>Gamepad</b> L-stick move · R-stick aim/look · A grab · X interact · LB brace · RT throw · RB ping · Y view<br>
-          <b>Phone</b> left thumb moves · Action button does what it shows (drag it to throw) · BRACE · 👁 view · tap a portrait then a spot to send a bot
+          <b>Desktop</b> WASD move · mouse aims · LMB grab/use, click again to put down · RMB aim & throw · Shift/Space brace · E interact · Q ping a bot · V view · F3 debug<br>
+          <b>Gamepad</b> L-stick move · R-stick aim/look · A grab, A again to put down · X interact · LB brace · RT throw · RB ping · Y view<br>
+          <b>Phone</b> left thumb moves · Action button does what it shows: tap to pick up, tap again to put down, drag it to throw · BRACE · 👁 view · tap a portrait then a spot to send a bot
         </div>
         <div class="menu-buttons">
           <button class="btn primary" data-a="resume">Back to work</button>

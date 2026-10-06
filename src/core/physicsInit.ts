@@ -28,9 +28,15 @@ async function loadJsBackend(): Promise<JsInstantiate> {
     mod = await import(/* @vite-ignore */ url);
   } catch {
     // some frames refuse module scripts from their own files but allow fetch + blob: modules
-    const text = await (await fetch(url)).text();
-    const blobUrl = URL.createObjectURL(new Blob([text], { type: 'text/javascript' }));
-    mod = await import(/* @vite-ignore */ blobUrl);
+    try {
+      const text = await (await fetch(url)).text();
+      const blobUrl = URL.createObjectURL(new Blob([text], { type: 'text/javascript' }));
+      mod = await import(/* @vite-ignore */ blobUrl);
+    } catch (err) {
+      // a refused blob: import says nothing recognisable ("Failed to fetch dynamically imported
+      // module: blob:…"), so name the culprit: the loading card then gives the right advice
+      throw new Error(`The physics engine (rapier-js.mjs) couldn't start: this page blocks WebAssembly and module scripts. ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
   if (typeof mod.instantiateRapierJs !== 'function') throw new Error('rapier-js.mjs did not load');
   return mod.instantiateRapierJs;
